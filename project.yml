@@ -1,0 +1,47 @@
+# XcodeGen spec — generates LiveCoach.xcodeproj.
+# Regenerate any time with:  xcodegen generate   (from this folder)
+name: LiveCoach
+options:
+  bundleIdPrefix: com.drewgoldman
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  LiveCoach:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Models          # PlayerDetector/BallDetector .mlpackage -> compiled to .mlmodelc
+      - path: Assets.xcassets # app icon; regenerate the PNG with Tools/make_appicon.py
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.drewgoldman.livecoach
+        TARGETED_DEVICE_FAMILY: "1"     # iPhone only
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        # Drew Goldman's personal team. Set HERE and not in Xcode's Signing tab:
+        # the .xcodeproj is GENERATED from this file, so a team picked in the UI
+        # is discarded the next time anyone runs `xcodegen generate`.
+        DEVELOPMENT_TEAM: "5HQD3NGZ54"
+    info:
+      path: LiveCoach/Info.plist
+      properties:
+        CFBundleDisplayName: LiveCoach
+        NSCameraUsageDescription: "Watches the court to detect players and the ball."
+        # Required before ANY CoreBluetooth use - the app traps without it.
+        NSBluetoothAlwaysUsageDescription: "Connects to your Shelly buzzer so it can alert you on court."
+        # Launch on the app's own surface colour, so there's no white flash
+        # before the (always dark) UI appears.
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UIRequiresFullScreen: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight

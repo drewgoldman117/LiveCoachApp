@@ -1,0 +1,23 @@
+.DS_Store
+
+# Xcode per-user state - editor window layout, breakpoints, scheme ordering.
+# Never useful to anyone else, and it churns on every open.
+xcuserdata/
+*.xcuserstate
+
+# Build products
+build/
+DerivedData/
+*.ipa
+*.dSYM.zip
+
+# The .xcodeproj IS tracked here on purpose: project.yml is the source of
+# truth, but xcodegen isn't installed on this machine, so the generated
+# project is the only thing that can actually be opened. If you install
+# xcodegen (brew install xcodegen), you can ignore LiveCoach.xcodeproj/
+# instead and regenerate it on checkout.
+
+# Core ML models converted from Ultralytics YOLOv8n (AGPL-3.0) and the
+# tennis-ball checkpoint. NOT redistributed: regenerate with
+#   python ../tennis-beeper/scripts/convert_coreml.py --app-dir .
+Models/*.mlpackage

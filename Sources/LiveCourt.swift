@@ -1,0 +1,304 @@
+// LiveCourt.swift
+//
+// Port of live.py's LiveCourt: acquires the court map while the session runs,
+// and keeps it current.
+//
+// Calibrating once at startup is enough for a recorded file and not enough for
+// a real camera. Two failures show up immediately in the field, both observed
+// in the Python prototype rather than imagined:
+//
+//   1. The court may not be usable at t=0 - the camera can open on a close-up,
+//      on someone crossing frame, or on its own auto-exposure settling. A
+//      one-shot attempt then leaves the WHOLE session with no court map, no
+//      overlay, no contacts, no alerts. Measured on the prototype's clips, 2 of
+//      8 failed the startup attempt and were rescued by background retry (they
+//      acquired at 18s and 30s).
+//   2. A phone zip-tied to a fence gets nudged. A fit made twenty minutes ago
+//      is then silently wrong - exactly the failure a hand calibration can
+//      never notice, and one of the reasons this app auto-calibrates at all.
+//
+// So detection keeps running: retry until acquired, then re-check periodically
+// and re-detect ONLY when the current fit has stopped matching the paint. That
+// last condition is deliberate - a fit still sitting on the lines is left alone
+// rather than swapped for a fresh one of similar quality.
+//
+// Detection costs seconds, so it runs on a background queue and the capture
+// callback only ever does a cheap `offer` (a downscaled grayscale copy).
+
+import Foundation
+import CoreVideo
+import CoreGraphics
+import ImageIO
+import UniformTypeIdentifiers
+import Accelerate
+
+final class LiveCourt: ObservableObject {
+
+    enum State: Equatable {
+        case searching          // no court map yet
+        case ready(support: Double)
+    }
+
+    /// The current court map, or nil while searching. Published so the live
+    /// view can show progress; the pipeline gets it through `onUpdate`.
+    @Published private(set) var calibration: Calibration?
+    @Published private(set) var state: State = .searching
+
+    /// Called on the MAIN thread whenever a new court map is adopted, so the
+    /// detector and the contact detector can be re-pointed at it.
+    var onUpdate: ((Calibration) -> Void)?
+
+    // Tuning, matching live.py.
+    private let sampleEvery = 10          // frames between ring-buffer samples
+    private let bufferCount = 12          // samples medianed (~4s at 30fps)
+    private let retrySeconds: TimeInterval = 15      // while there is NO map
+    private let revalidateSeconds: TimeInterval = 120 // with a map, drift check
+    private let driftSupport = 0.70       // below this, something moved
+    private let minSupport = 0.80         // adopt only a confident fit (LOW_SUPPORT)
+
+    /// Detection runs at this width; frames are downscaled to it. 1280 keeps a
+    /// court line a couple of pixels wide (what lineMask needs) while keeping
+    /// the ~200k-hypothesis search affordable on a phone.
+    private let detectWidth = 1280
+
+    /// All mutable state below is touched only on `lock`; `offer` is called
+    /// from the capture queue and the detection runs on `queue`.
+    private let lock = NSLock()
+    private var ring: [[UInt8]] = []
+    private var ringW = 0, ringH = 0
+    private var frameIndex = 0
+    private var busy = false
+    private var lastAttempt = Date()
+    private var current: Calibration?
+    private let queue = DispatchQueue(label: "court.detect", qos: .utility)
+
+    /// Throw away the current map and start hunting again immediately.
+    ///
+    /// The escape hatch for a fit that is confidently WRONG. Drift re-detection
+    /// cannot catch that case by design - it fires when the fit stops matching
+    /// the paint, and a wrong-but-plausible court matches paint perfectly well.
+    /// Without this, such a fit is saved, seeds every later session, and there
+    /// is no way to say "no, that isn't the court".
+    func reset() {
+        lock.lock()
+        current = nil
+        ring.removeAll()
+        lastAttempt = .distantPast          // eligible to retry on the next frame
+        lock.unlock()
+        Calibration.reset()                 // and don't let it come back on relaunch
+        DispatchQueue.main.async {
+            self.calibration = nil
+            self.state = .searching
+        }
+    }
+
+    /// Seed with a saved map (may be nil). Seeding does NOT stop detection: a
+    /// saved fit is a starting point to be re-checked, not a promise.
+    func adopt(_ cal: Calibration?) {
+        lock.lock(); current = cal; lock.unlock()
+        if let cal {
+            DispatchQueue.main.async {
+                self.calibration = cal
+                self.state = .ready(support: 1.0)
+            }
+        }
+    }
+
+    /// Offer the current camera frame.
+    ///
+    /// The stride check comes FIRST, before the conversion. Converting and then
+    /// discarding 9 frames in 10 meant a full-frame colour conversion 60 times a
+    /// second on the capture thread for work that was thrown away - the capture
+    /// thread is also where the two Core ML models run, so that is stolen
+    /// directly from the frame rate.
+    func offer(_ pixelBuffer: CVPixelBuffer) {
+        lock.lock()
+        frameIndex += 1
+        let take = frameIndex % sampleEvery == 0
+        lock.unlock()
+        guard take else { return }
+
+        guard let (gray, w, h) = LiveCourt.grayscale(pixelBuffer, targetWidth: detectWidth) else { return }
+
+        lock.lock()
+        if ringW != w || ringH != h { ring.removeAll(); ringW = w; ringH = h }
+        ring.append(gray)
+        if ring.count > bufferCount { ring.removeFirst() }
+
+        let gap = (current == nil) ? retrySeconds : revalidateSeconds
+        guard !busy, ring.count >= min(8, bufferCount),
+              Date().timeIntervalSince(lastAttempt) >= gap else { lock.unlock(); return }
+        lastAttempt = Date()
+        busy = true
+        let frames = ring, existing = current
+        lock.unlock()
+
+        queue.async { [weak self] in
+            guard let self else { return }
+            let det = LiveCourt.work(frames: frames, width: w, height: h,
+                                     existing: existing, driftSupport: self.driftSupport,
+                                     minSupport: self.minSupport)
+            self.finish(det, width: w, height: h)
+        }
+    }
+
+    private func finish(_ det: CourtDetection?, width: Int, height: Int) {
+        lock.lock()
+        busy = false
+        guard let det else { lock.unlock(); return }
+        let cal = Calibration(frameWidth: width, frameHeight: height,
+                              imagePoints: det.imagePoints.map { [Double($0.x), Double($0.y)] },
+                              homography: det.homography.m,
+                              homographyInv: det.homographyInv.m)
+        current = cal
+        lock.unlock()
+
+        try? cal.save()          // survives relaunch; next session starts with a map
+        DispatchQueue.main.async {
+            self.calibration = cal
+            self.state = .ready(support: det.support)
+            self.onUpdate?(cal)
+        }
+    }
+
+    /// The background job. Returns a NEW detection only when one should be
+    /// adopted; nil means "keep what we have".
+    private static func work(frames: [[UInt8]], width w: Int, height h: Int,
+                             existing: Calibration?, driftSupport: Double,
+                             minSupport: Double) -> CourtDetection? {
+        let median = medianFrame(frames, count: w * h)
+
+        if let existing {
+            // Cheap first: does the fit we already have still sit on the paint?
+            // If so there is nothing to do, and re-detecting would risk trading
+            // a good fit for a marginal one.
+            let mask = CourtDetect.lineMask(median, width: w, height: h,
+                                            lineWidth: max(2, Int((Double(w) / 380).rounded())))
+            let support = CourtDetect.dilate(mask, width: w, height: h,
+                                             radius: CourtDetect.supportRadiusPx)
+            let scored = CourtDetect.scoreHomography(existing.Hinv, support: support,
+                                                     width: w, height: h).support
+            if scored >= driftSupport { return nil }
+        }
+
+        // Dump the input BEFORE detecting, not only after. Writing it only on
+        // completion means a detection that is slow, wedged, or cut short by
+        // the user leaving the screen produces NO evidence at all - which is
+        // exactly what happened on the first field attempt: no dump existed,
+        // so there was no way to tell a detector failure from an attempt that
+        // never ran.
+        dumpDebug(median, width: w, height: h, det: nil, note: "attempting…")
+        let started = Date()
+        let det = CourtDetect.detect(gray: median, width: w, height: h)
+        dumpDebug(median, width: w, height: h, det: det,
+                  note: String(format: "took %.1fs", Date().timeIntervalSince(started)))
+        guard let det, det.support >= minSupport else { return nil }
+        return det
+    }
+
+    /// Write the median frame + verdict to Documents (pull with
+    /// `xcrun devicectl device copy from --domain-type appDataContainer`).
+    private static func dumpDebug(_ gray: [UInt8], width w: Int, height h: Int,
+                                  det: CourtDetection?, note: String = "") {
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        var pixels = gray
+        let verdict: String
+        if let det {
+            verdict = "support \(det.support)\ncompleteness \(det.completeness)\n"
+                + "linesMatched \(det.linesMatched)\nadopted \(det.support >= 0.80)\n"
+                + "H \(det.homography.m)\n"
+        } else {
+            verdict = "no court in this attempt\n"
+        }
+        try? (verdict + "note \(note)\nsize \(w)x\(h)\nat \(Date())\n")
+            .write(to: dir.appendingPathComponent("court_debug.txt"),
+                   atomically: true, encoding: .utf8)
+        pixels.withUnsafeMutableBytes { buf in
+            guard let ctx = CGContext(data: buf.baseAddress, width: w, height: h,
+                                      bitsPerComponent: 8, bytesPerRow: w,
+                                      space: CGColorSpaceCreateDeviceGray(),
+                                      bitmapInfo: CGImageAlphaInfo.none.rawValue),
+                  let cg = ctx.makeImage() else { return }
+            let dest = dir.appendingPathComponent("court_debug.png")
+            guard let d = CGImageDestinationCreateWithURL(dest as CFURL, "public.png" as CFString,
+                                                          1, nil) else { return }
+            CGImageDestinationAddImage(d, cg, nil)
+            CGImageDestinationFinalize(d)
+        }
+    }
+
+    /// Per-pixel median - players and the ball vanish, the court stays. The
+    /// SAMPLING STRIDE is what makes this work: consecutive frames have the
+    /// players in the same place, so they would survive the median.
+    private static func medianFrame(_ frames: [[UInt8]], count: Int) -> [UInt8] {
+        guard let first = frames.first else { return [] }
+        if frames.count == 1 { return first }
+        var out = [UInt8](repeating: 0, count: count)
+        var scratch = [UInt8](repeating: 0, count: frames.count)
+        let mid = frames.count / 2
+        for i in 0..<count {
+            for (k, f) in frames.enumerated() { scratch[k] = f[i] }
+            scratch.sort()
+            out[i] = scratch[mid]
+        }
+        return out
+    }
+
+    // MARK: - Pixel buffer -> downscaled grayscale
+
+    /// Luma plane of a 420f/420v buffer (or BGRA converted), downscaled to
+    /// `targetWidth`. Grayscale is all CourtDetect needs, and the luma plane is
+    /// already exactly that - no colour conversion required for the common case.
+    static func grayscale(_ pb: CVPixelBuffer, targetWidth: Int) -> ([UInt8], Int, Int)? {
+        CVPixelBufferLockBaseAddress(pb, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
+
+        let fmt = CVPixelBufferGetPixelFormatType(pb)
+        let srcW = CVPixelBufferGetWidth(pb), srcH = CVPixelBufferGetHeight(pb)
+        var srcGray = [UInt8](repeating: 0, count: srcW * srcH)
+
+        if fmt == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+            || fmt == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange {
+            guard let base = CVPixelBufferGetBaseAddressOfPlane(pb, 0) else { return nil }
+            let stride = CVPixelBufferGetBytesPerRowOfPlane(pb, 0)
+            let p = base.assumingMemoryBound(to: UInt8.self)
+            for y in 0..<srcH {
+                memcpy(&srcGray[y * srcW], p + y * stride, srcW)
+            }
+        } else if fmt == kCVPixelFormatType_32BGRA {
+            // This is the format CameraManager actually requests, so it is the
+            // hot path - vImage, not a scalar per-pixel loop (which was ~2M
+            // iterations per frame at 1080p).
+            guard let base = CVPixelBufferGetBaseAddress(pb) else { return nil }
+            var src = vImage_Buffer(data: base, height: vImagePixelCount(srcH),
+                                    width: vImagePixelCount(srcW),
+                                    rowBytes: CVPixelBufferGetBytesPerRow(pb))
+            let ok: vImage_Error = srcGray.withUnsafeMutableBufferPointer { buf -> vImage_Error in
+                var dst = vImage_Buffer(data: buf.baseAddress, height: vImagePixelCount(srcH),
+                                        width: vImagePixelCount(srcW), rowBytes: srcW)
+                // Luma weights scaled by 256, in MEMORY order for BGRA:
+                // 0.114*B + 0.587*G + 0.299*R + 0*A.
+                let coeffs: [Int16] = [29, 150, 77, 0]
+                return coeffs.withUnsafeBufferPointer { m in
+                    vImageMatrixMultiply_ARGB8888ToPlanar8(&src, &dst, m.baseAddress!, 256,
+                                                           nil, 0, vImage_Flags(kvImageNoFlags))
+                }
+            }
+            guard ok == kvImageNoError else { return nil }
+        } else {
+            return nil
+        }
+
+        if srcW <= targetWidth { return (srcGray, srcW, srcH) }
+        let dstW = targetWidth
+        let dstH = max(1, Int((Double(srcH) * Double(dstW) / Double(srcW)).rounded()))
+        var dst = [UInt8](repeating: 0, count: dstW * dstH)
+        var srcBuf = vImage_Buffer(data: &srcGray, height: vImagePixelCount(srcH),
+                                   width: vImagePixelCount(srcW), rowBytes: srcW)
+        var dstBuf = vImage_Buffer(data: &dst, height: vImagePixelCount(dstH),
+                                   width: vImagePixelCount(dstW), rowBytes: dstW)
+        guard vImageScale_Planar8(&srcBuf, &dstBuf, nil, vImage_Flags(kvImageHighQualityResampling))
+                == kvImageNoError else { return (srcGray, srcW, srcH) }
+        return (dst, dstW, dstH)
+    }
+}
