@@ -1,14 +1,44 @@
-# LiveCoach (iOS) — native on-device port
+# LiveCoach — real-time tennis coaching, entirely on an iPhone
 
-The native iPhone app that reimplements the Python prototype's real-time
-pipeline (`../tennis-beeper`). A home screen that reports what the system knows
-and starts a session, **automatic court detection (no tapping)**, then live
-camera → player boxes + foot dots + tracked ball + reprojected court lines +
-top-down minimap + FPS HUD, all on-device on the Apple Neural Engine, plus
-contacts, shot cones, the opponent-position alert and the Bluetooth buzz.
+Mount a phone on the fence, press start, and it coaches you: it finds the court
+by itself, tracks both players and the ball on the Neural Engine, detects the
+frame you strike the ball, and buzzes a Bluetooth device when your opponent is
+out of position. No calibration, no taps, no server.
 
-Everything here is a straight port of the tuned logic in the Python repo — see
-that repo's `CLAUDE.md` for *why* each threshold and gate exists.
+![automatic court detection](docs/court_detection.jpg)
+
+*The court model fitted automatically to a photo of a real court — no tapping, no
+training data. Support 0.94, six model lines matched, ~1 second.*
+
+### What's technically interesting here
+
+**A classical computer-vision algorithm ported to Swift with no OpenCV.**
+`CourtDetect.swift` implements the whole court-fitting pipeline by hand — line
+mask, Hough transform, vanishing-point grouping, an exhaustive ~200k-hypothesis
+model fit, and ICP refinement against line pixels — using only Accelerate and a
+LAPACK homography solve. It scores **2.28px median keypoint error on 200
+ground-truth frames**, between a published deep network's base (2.83px) and
+refined (1.83px) results, with nothing to train and no weights to ship.
+
+**Validated against the reference implementation, not just eyeballed.** The Swift
+detector is cross-checked against the Python on identical pixel buffers; where the
+two disagree, the measured line residual decides which is right. Two porting bugs
+were caught this way that reading the code would not have found: a Swift `Range`
+that traps where numpy clips, and a brush shape that inflated a *ranking* metric
+enough to change which hypothesis won.
+
+**Concurrency where it counts.** Detection costs seconds, so the court map is
+acquired and maintained on a background queue and handed to the capture thread
+through an explicit queue — the video loop never blocks, and no homography is read
+on one thread while written on another.
+
+**Honest about its limits.** Accuracy in the far half is set by camera height, not
+by the algorithm: mounted at eye level the far half spans ~70px, so one pixel of
+line error is ~0.18m against a 2m alert threshold. That was measured, not assumed.
+
+Ported from the Python reference implementation at
+[tennis-beeper](https://github.com/drewgoldman117/tennis-beeper), whose `CLAUDE.md`
+documents why each threshold and gate exists.
 
 ## What's already done for you
 
