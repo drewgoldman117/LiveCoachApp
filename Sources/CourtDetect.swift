@@ -10,7 +10,7 @@
 //
 // Deliberately CLASSICAL, not a learned keypoint model, for the same reasons
 // as the Python: the camera is fixed so this runs once and may be slow, the
-// court model is exactly known, and there is no generalisation risk (the trap
+// court model is exactly known, and there is no generalization risk (the trap
 // the ball model already fell into on unfamiliar courts).
 //
 // Pipeline: line-structure mask -> Hough -> vanishing-point grouping ->
@@ -42,7 +42,7 @@ import CoreGraphics
 
 // MARK: - Model
 
-/// A line as a*x + b*y + c = 0 with (a,b) a unit normal, sign-normalised so
+/// A line as a*x + b*y + c = 0 with (a,b) a unit normal, sign-normalized so
 /// duplicates compare equal.
 struct CourtLine {
     var a: Double, b: Double, c: Double
@@ -66,8 +66,8 @@ struct CourtLine {
 }
 
 struct CourtDetection {
-    let homography: Homography       // image pixels -> court metres
-    let homographyInv: Homography    // court metres -> image pixels
+    let homography: Homography       // image pixels -> court meters
+    let homographyInv: Homography    // court meters -> image pixels
     let support: Double              // 0..1 model lines sitting on detected lines
     let completeness: Double         // 0..1 detected lines the model explains
     let linesMatched: Int
@@ -132,7 +132,7 @@ enum CourtDetect {
         return segs
     }
 
-    /// Court-metre points sampled along every scoring segment.
+    /// Court-meter points sampled along every scoring segment.
     static let samples: [CGPoint] = {
         var pts: [CGPoint] = []
         for (p0, p1) in scoringSegments {
@@ -204,7 +204,7 @@ enum CourtDetect {
     // MARK: - 2. Hough lines
 
     /// Standard Hough transform over (rho=1px, theta=pi/180), with the same
-    /// 4-neighbour non-maximum suppression and descending-vote ordering as
+    /// 4-neighbor non-maximum suppression and descending-vote ordering as
     /// cv2.HoughLines. Vote order matters: the pool is truncated by it, and
     /// truncating by image POSITION instead once discarded the real court
     /// lines (see CLAUDE.md).
@@ -283,8 +283,8 @@ enum CourtDetect {
     /// vanishing point can sit thousands of pixels off-frame, where a fixed
     /// pixel tolerance is meaningless, but the angular test stays scale-free.
     private static func supportsVP(_ line: CourtLine, _ vp: CGPoint,
-                                   _ centre: CGPoint, _ maxAngleDeg: Double) -> Bool {
-        let q = line.closestPoint(to: centre)
+                                   _ center: CGPoint, _ maxAngleDeg: Double) -> Bool {
+        let q = line.closestPoint(to: center)
         let vx = Double(vp.x) - Double(q.x), vy = Double(vp.y) - Double(q.y)
         let n = (vx * vx + vy * vy).squareRoot()
         if n < 1e-6 { return true }
@@ -304,7 +304,7 @@ enum CourtDetect {
     /// constant-X lines at another.
     static func groupLines(_ lines: [CourtLine], width w: Int, height h: Int,
                            maxAngleDeg: Double = 2.5) -> ([CourtLine], [CourtLine]) {
-        let centre = CGPoint(x: Double(w) / 2.0, y: Double(h) / 2.0)
+        let center = CGPoint(x: Double(w) / 2.0, y: Double(h) / 2.0)
         var pool = lines
         var families: [[CourtLine]] = []
         for _ in 0..<2 {
@@ -314,7 +314,7 @@ enum CourtDetect {
                 for j in (i + 1)..<pool.count {
                     guard let vp = intersect(pool[i], pool[j]) else { continue }
                     var inliers: [Int] = []
-                    for (k, l) in pool.enumerated() where supportsVP(l, vp, centre, maxAngleDeg) {
+                    for (k, l) in pool.enumerated() where supportsVP(l, vp, center, maxAngleDeg) {
                         inliers.append(k)
                     }
                     if inliers.count > bestIdx.count { bestIdx = inliers }
@@ -376,7 +376,7 @@ enum CourtDetect {
     /// model's lines sit on white lines?", which a wrong fit answers perfectly:
     /// a court is a nest of parallel lines, so mapping the whole model onto
     /// just the service box puts every sample on real paint and scores ~1.0
-    /// while being hundreds of metres wrong. Completeness asks the reverse.
+    /// while being hundreds of meters wrong. Completeness asks the reverse.
     static func completeness(_ hInv: Homography, smallMask: [UInt8],
                              width sw: Int, height sh: Int, scale: Double) -> Double {
         var canvas = [UInt8](repeating: 0, count: sw * sh)

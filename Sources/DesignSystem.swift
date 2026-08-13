@@ -10,14 +10,14 @@
 // Rules that keep it coherent:
 //   - ONE accent. If everything is highlighted, nothing is.
 //   - Numbers and machine state are monospaced; prose is not.
-//   - Labels are uppercase, small, wide-tracked, and secondary-coloured.
+//   - Labels are uppercase, small, wide-tracked, and secondary-colored.
 //   - Structure comes from hairlines and space, never from heavy borders.
 
 import SwiftUI
 
 enum DS {
 
-    // MARK: - Colour
+    // MARK: - Color
 
     enum Color {
         /// Page background. Near-black with a trace of blue so it doesn't read as flat ink.
@@ -41,7 +41,7 @@ enum DS {
 
     // MARK: - Type
     //
-    // Two families only: monospaced for machine state (fps, metres, timings,
+    // Two families only: monospaced for machine state (fps, meters, timings,
     // labels), the system face for headings and prose.
 
     enum Font {
@@ -70,7 +70,7 @@ enum DS {
         static let panelRadius: CGFloat = 10
         static let controlHeight: CGFloat = 46
         /// Tracking used on every uppercase label - the thing that makes small
-        /// caps read as instrument labelling rather than shouting.
+        /// caps read as instrument labeling rather than shouting.
         static let labelTracking: CGFloat = 1.6
         static let wordmarkTracking: CGFloat = 4.5
     }
@@ -239,7 +239,7 @@ struct SecondaryButton: View {
 }
 
 /// Every control uses the same press feedback: a small, fast scale. Consistency
-/// in motion is as much a part of the system as the colours.
+/// in motion is as much a part of the system as the colors.
 struct PressScale: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label

@@ -37,7 +37,7 @@ targets:
         NSCameraUsageDescription: "Watches the court to detect players and the ball."
         # Required before ANY CoreBluetooth use - the app traps without it.
         NSBluetoothAlwaysUsageDescription: "Connects to your Shelly buzzer so it can alert you on court."
-        # Launch on the app's own surface colour, so there's no white flash
+        # Launch on the app's own surface color, so there's no white flash
         # before the (always dark) UI appears.
         UILaunchScreen:
           UIColorName: LaunchBackground

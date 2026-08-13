@@ -34,7 +34,7 @@ NAVY_BOTTOM = (14, 26, 44)
 ACCENT = (216, 255, 62)     # DS.Color.accent
 LINE = (255, 255, 255)
 
-# Court geometry in metres (mirrors Court.swift; only the lines that survive at
+# Court geometry in meters (mirrors Court.swift; only the lines that survive at
 # 40px are drawn - the full line set turns to mush).
 LENGTH_M, HALF_WIDTH_M = 23.77, 4.115
 NET_Y = LENGTH_M / 2
@@ -92,7 +92,7 @@ def main():
     img = ImageChops.screen(img, surface)
 
     # --- court lines. Only outline + net + far service line: at 40px anything
-    # more collapses into grey. Line weight tapers with depth. ---
+    # more collapses into gray. Line weight tapers with depth. ---
     lines = Image.new("RGB", (S, S), (0, 0, 0))
     d = ImageDraw.Draw(lines)
     w_near, w_far = int(0.012 * S), int(0.007 * S)
@@ -129,7 +129,7 @@ def main():
     d.ellipse([far[0] - r, far[1] - r, far[0] + r, far[1] + r], fill=ACCENT)
     img = add_glow(img, node, blur=0.05 * S, gain=1.4)
     img = ImageChops.screen(img, node)
-    # White-hot centre keeps the node from reading as a flat dot at small sizes.
+    # White-hot center keeps the node from reading as a flat dot at small sizes.
     core = Image.new("RGB", (S, S), (0, 0, 0))
     d = ImageDraw.Draw(core)
     rc = int(r * 0.42)

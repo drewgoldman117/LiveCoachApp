@@ -57,8 +57,8 @@ for c in contacts {
         if let opp = Tactics.findOpponent(courtPositions: court[c.frame],
                                           boxes: boxes[c.frame], strikerID: c.strikerID) {
             let off = Tactics.bisectorOffset(opponent: opp.court, apex: apex, bisector: cone.bisector)
-            line += String(format: "  opponent %.1fm off%@", off.metres,
-                           off.metres > outOfPositionM ? "  OUT OF POSITION" : "")
+            line += String(format: "  opponent %.1fm off%@", off.meters,
+                           off.meters > outOfPositionM ? "  OUT OF POSITION" : "")
         }
     }
     print(line)
@@ -69,16 +69,16 @@ let live = LiveContactDetector(fps: fps, homography: H)
 var liveHits: [(Int, Double)] = []
 for f in 0..<ball.count {
     for hit in live.update(ballPx: ball[f], boxes: boxes[f], court: court[f]) {
-        var metres = -1.0
+        var meters = -1.0
         if let apex = hit.apexCourt {
             let cone = Tactics.shotCone(apex: apex)
             if let opp = Tactics.findOpponent(courtPositions: hit.courtAt, boxes: hit.boxesAt,
                                               strikerID: hit.event.strikerID) {
-                metres = Tactics.bisectorOffset(opponent: opp.court, apex: apex,
-                                                bisector: cone.bisector).metres
+                meters = Tactics.bisectorOffset(opponent: opp.court, apex: apex,
+                                                bisector: cone.bisector).meters
             }
         }
-        liveHits.append((hit.event.frame, metres))
+        liveHits.append((hit.event.frame, meters))
     }
 }
 print("CAUSAL contacts: \(liveHits.count)")

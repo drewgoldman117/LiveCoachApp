@@ -220,7 +220,7 @@ struct HomeView: View {
 //
 // A drawn court in perspective with the shot cone, its bisector, and an
 // opponent standing off it. Not live data - it's the diagram of what the system
-// computes, which is why the panel is labelled "the signal" rather than dressed
+// computes, which is why the panel is labeled "the signal" rather than dressed
 // up as a readout.
 
 struct CourtDiagram: View {
@@ -277,7 +277,7 @@ struct CourtDiagram: View {
                            style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
             }
 
-            // --- court lines (far ones dimmer: depth without extra colour) ---
+            // --- court lines (far ones dimmer: depth without extra color) ---
             for (a, b) in Court.courtSegments {
                 var seg = Path(); seg.move(to: P(a)); seg.addLine(to: P(b))
                 let depth = max(a.y, b.y) / Court.lengthM
@@ -311,10 +311,10 @@ struct CourtDiagram: View {
             ctx.stroke(Path(ellipseIn: CGRect(x: o.x - 5, y: o.y - 5, width: 10, height: 10)),
                        with: .color(DS.Color.alert), lineWidth: 2)
 
-            let metres = hypot(opponent.x - onLine.x, opponent.y - onLine.y)
+            let meters = hypot(opponent.x - onLine.x, opponent.y - onLine.y)
             // Left of the connector, not above it: above collided with the far
             // baseline and the panel edge.
-            ctx.draw(Text(String(format: "%.1f m off", metres))
+            ctx.draw(Text(String(format: "%.1f m off", meters))
                         .font(DS.Font.caption)
                         .foregroundStyle(DS.Color.alert),
                      at: CGPoint(x: min(o.x, f.x) - 8, y: (o.y + f.y) / 2), anchor: .trailing)
@@ -327,7 +327,7 @@ struct CourtDiagram: View {
     }
 
     /// Foot of the perpendicular from `p` to the bisector - the same computation
-    /// as `bisector_offset` in the Python prototype, in court metres.
+    /// as `bisector_offset` in the Python prototype, in court meters.
     private func closestPointOnBisector(apex: CGPoint, end: CGPoint, to p: CGPoint) -> CGPoint {
         let d = CGPoint(x: end.x - apex.x, y: end.y - apex.y)
         let l2 = d.x * d.x + d.y * d.y

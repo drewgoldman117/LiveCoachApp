@@ -2,7 +2,7 @@
 //
 // The tactical layer - Swift port of `shot_cone`, `find_opponent` and
 // `bisector_offset` from the prototype's `src/detect.py`. Pure geometry in
-// court metres; no drawing, no Vision.
+// court meters; no drawing, no Vision.
 //
 // The idea is Cochet's "theory of angles": from where you strike, there is a
 // range of legal shot directions, and the BISECTOR of that range is where your
@@ -17,7 +17,7 @@
 import Foundation
 import CoreGraphics
 
-/// Metres off the bisector that counts as out of position - the buzz trigger.
+/// Meters off the bisector that counts as out of position - the buzz trigger.
 /// Verified against real play: a pro sits 0.1-1.2m off (i.e. never trips it);
 /// the genuinely-out-of-position moment on the test footage measured 2.6-2.8m.
 let outOfPositionM: Double = 2.0
@@ -25,7 +25,7 @@ let outOfPositionM: Double = 2.0
 enum Tactics {
 
     /// Realistic in-court shot cone from a contact at `apex`. Returns the two
-    /// extreme landing corners and the bisector's end point, in court metres.
+    /// extreme landing corners and the bisector's end point, in court meters.
     ///
     /// The sharpest angle a player can realistically hit is NOT to the net
     /// corner - the ball has to clear the net and come down - so the tightest
@@ -50,11 +50,11 @@ enum Tactics {
         return (left.point, right.point, CGPoint(x: bx, y: yFar))
     }
 
-    /// Perpendicular distance in metres from `opponent` to the bisector line
+    /// Perpendicular distance in meters from `opponent` to the bisector line
     /// (apex -> bisector end), plus the foot of that perpendicular. This is how
     /// far off the ideal recovery axis they are - the tactical positioning error.
     static func bisectorOffset(opponent: CGPoint, apex: CGPoint,
-                               bisector: CGPoint) -> (metres: Double, foot: CGPoint) {
+                               bisector: CGPoint) -> (meters: Double, foot: CGPoint) {
         let dx = bisector.x - apex.x, dy = bisector.y - apex.y
         let l2 = dx * dx + dy * dy
         guard l2 > 0 else {

@@ -33,6 +33,9 @@ final class LivePipeline: ObservableObject {
     /// Finds and maintains that court map in the background. This is why the
     /// app no longer requires tapping the 8 corners.
     let court: LiveCourt
+    /// Mirrored from `court`, because SwiftUI does not observe a nested
+    /// ObservableObject - reading court.isMoving directly would never redraw.
+    @Published private(set) var cameraIsMoving = false
     private let buzzer: BuzzerLink?
     private var contacts: LiveContactDetector?
     /// A court map waiting to be applied on the capture queue (see `adopt`).
@@ -63,13 +66,14 @@ final class LivePipeline: ObservableObject {
         // A saved map (if any) seeds the detector, which then keeps checking it
         // rather than trusting it forever.
         court = LiveCourt()
-        // Contacts need the ball AND a court map (the gates are in court metres).
+        // Contacts need the ball AND a court map (the gates are in court meters).
         if let cal = calibration {
             // 60fps capture (see CameraManager): the lag is ~11 frames, so 0.18s.
             contacts = LiveContactDetector(fps: 60, homography: cal.H)
         }
         court.adopt(calibration)
         court.onUpdate = { [weak self] cal in self?.adopt(cal) }
+        court.onMovingChanged = { [weak self] moving in self?.cameraIsMoving = moving }
         camera.onFrame = { [weak self] pixelBuffer in
             self?.handle(pixelBuffer)
         }
@@ -93,7 +97,7 @@ final class LivePipeline: ObservableObject {
     ///
     /// Everything downstream has to be cleared with it, not just the overlay:
     /// leaving the detector and contact detector pointed at the old homography
-    /// would keep producing court positions and out-of-position metres in a
+    /// would keep producing court positions and out-of-position meters in a
     /// court the user has just said is wrong.
     /// Called on the MAIN thread (a button). It may only touch main-thread
     /// state; `detector`, `contacts` and `courtMapForFrame` belong to the
@@ -120,7 +124,7 @@ final class LivePipeline: ObservableObject {
         if reset {
             // Clear everything holding the rejected homography, not just the
             // overlay: a stale detector would keep reporting court positions,
-            // and a stale contact detector out-of-position metres, in a court
+            // and a stale contact detector out-of-position meters, in a court
             // the user has just said is wrong.
             courtMapForFrame = nil
             detector?.calibration = nil
@@ -178,8 +182,8 @@ final class LivePipeline: ObservableObject {
                                                      bisector: cone.bisector)
                     reco = ContactFlash.Recovery(opponentPx: opp.footPx,
                                                  idealCourt: off.foot,
-                                                 metres: off.metres)
-                    if off.metres > outOfPositionM {
+                                                 meters: off.meters)
+                    if off.meters > outOfPositionM {
                         buzzer?.buzz()
                         DispatchQueue.main.async { self.alerts += 1 }
                     }
@@ -215,7 +219,7 @@ struct ContactFlash {
     struct Recovery {
         let opponentPx: CGPoint
         let idealCourt: CGPoint
-        let metres: Double
+        let meters: Double
     }
     let strikerID: Int?
     let ballPx: CGPoint
@@ -271,7 +275,12 @@ struct LiveView: View {
                 // this, a session with no map yet looks identical to a broken
                 // one - the same reason live.py prints a COURT status.
                 if pipeline.calibration == nil {
-                    Text("FINDING COURT…")
+                    // Say which of the two states it is. "Finding court" while
+                    // the phone is being carried looks identical to "finding
+                    // court" while it is mounted and failing, and only one of
+                    // those is the user's to fix.
+                    Text(pipeline.cameraIsMoving ? "HOLD STILL — WAITING FOR THE CAMERA TO SETTLE"
+                                                 : "FINDING COURT…")
                         .font(DS.Font.label)
                         .tracking(DS.Metric.labelTracking)
                         .padding(.horizontal, 10).padding(.vertical, 6)
@@ -414,16 +423,16 @@ struct OverlayView: View {
         if let reco = flash.recovery {
             let opp = fit.toView(reco.opponentPx)
             let ideal = toView(reco.idealCourt)
-            let out = reco.metres > outOfPositionM
-            let colour: Color = out ? .red : .green
+            let out = reco.meters > outOfPositionM
+            let color: Color = out ? .red : .green
             var link = Path(); link.move(to: opp); link.addLine(to: ideal)
-            ctx.stroke(link, with: .color(colour),
+            ctx.stroke(link, with: .color(color),
                        style: StrokeStyle(lineWidth: 3, dash: out ? [] : [4, 4]))
             ctx.fill(Path(ellipseIn: CGRect(x: opp.x - 9, y: opp.y - 9, width: 18, height: 18)),
-                     with: .color(colour))
-            ctx.draw(Text(String(format: "%.1fm off", reco.metres))
+                     with: .color(color))
+            ctx.draw(Text(String(format: "%.1fm off", reco.meters))
                         .font(.system(size: 15, weight: .bold, design: .monospaced))
-                        .foregroundStyle(colour),
+                        .foregroundStyle(color),
                      at: CGPoint(x: (opp.x + ideal.x) / 2 + 10, y: (opp.y + ideal.y) / 2),
                      anchor: .leading)
         }
@@ -526,11 +535,11 @@ struct OverlayView: View {
             var path = Path(); path.move(to: a); path.addLine(to: b)
             ctx.stroke(path, with: .color(.white.opacity(alpha)), lineWidth: width)
         }
-        // Centre service line, so the halves read as service boxes.
-        var centre = Path()
-        centre.move(to: toMap(CGPoint(x: 0, y: Court.nearServiceLineY)))
-        centre.addLine(to: toMap(CGPoint(x: 0, y: Court.farServiceLineY)))
-        ctx.stroke(centre, with: .color(.white.opacity(0.4)), lineWidth: 0.8)
+        // Center service line, so the halves read as service boxes.
+        var center = Path()
+        center.move(to: toMap(CGPoint(x: 0, y: Court.nearServiceLineY)))
+        center.addLine(to: toMap(CGPoint(x: 0, y: Court.farServiceLineY)))
+        ctx.stroke(center, with: .color(.white.opacity(0.4)), lineWidth: 0.8)
 
         // Players (red) + ball (yellow).
         for p in result.players {

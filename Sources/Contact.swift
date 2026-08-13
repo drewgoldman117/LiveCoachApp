@@ -12,7 +12,7 @@
 // without re-reading the rationale in the Python repo's CLAUDE.md
 // ("Contact detection ... Bugs found and how they're fixed").
 //
-// Why pixel space and not court metres: the homography assumes a point on the
+// Why pixel space and not court meters: the homography assumes a point on the
 // court plane, but the ball is ABOVE the plane in flight, so its mapped court
 // position is wrong mid-flight. Trajectory shape and "is the ball at the
 // player" are both honest in the image. Player FEET are on the ground, so their
@@ -188,7 +188,7 @@ enum ContactDetector {
 
     /// Null out arm/body latch spikes BEFORE interpolation - otherwise the spike
     /// contaminates the interpolated trajectory on either side too, faking a
-    /// reversal at the excursion's edge rather than only at its centre.
+    /// reversal at the excursion's edge rather than only at its center.
     static func despikeExcursions(_ ball: [CGPoint?]) -> [CGPoint?] {
         var out = ball
         for f in ball.indices where ball[f] != nil {

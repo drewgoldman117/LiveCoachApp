@@ -126,19 +126,33 @@ final class CameraManager: NSObject, ObservableObject {
     /// at >= 60fps, then pin the frame duration to 60.
     private func selectBest60fpsFormat(for device: AVCaptureDevice) {
         var best: AVCaptureDevice.Format?
-        var bestPixels = 0
+        var bestKey = (-1, -1)
         let maxWidth = 1920   // 1080p is a good speed/quality start; raise later
 
+        var considered: [String] = []
         for format in device.formats {
             let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
             guard dims.width <= maxWidth else { continue }
             let supports60 = format.videoSupportedFrameRateRanges.contains { $0.maxFrameRate >= 60 }
             guard supports60 else { continue }
-            let pixels = Int(dims.width) * Int(dims.height)
-            if pixels > bestPixels { bestPixels = pixels; best = format }
+            considered.append("\(dims.width)x\(dims.height)")
+            // Rank by WIDTH first, pixels second. Ranking by pixel count alone
+            // picked a 4:3 format (1440x1080 = 1.55MP beats 16:9 1280x720 =
+            // 0.92MP) - which is the wrong trade here: the wasted dimension is
+            // HORIZONTAL field of view, and the court's width is what has to fit
+            // in frame. A 4:3 capture also has to be cropped hard to fill a
+            // 19.5:9 screen, throwing away more of it.
+            let key = (Int(dims.width), Int(dims.width) * Int(dims.height))
+            if key > bestKey { bestKey = key; best = format }
         }
+        print("Camera: 60fps formats available: \(considered.joined(separator: ", "))")
 
-        guard let chosen = best else { return }
+        guard let chosen = best else {
+            print("Camera: NO 60fps format found; leaving the default")
+            return
+        }
+        let d = CMVideoFormatDescriptionGetDimensions(chosen.formatDescription)
+        print("Camera: selected \(d.width)x\(d.height) @60fps")
         do {
             try device.lockForConfiguration()
             device.activeFormat = chosen

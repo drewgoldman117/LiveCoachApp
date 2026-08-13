@@ -47,13 +47,28 @@ final class LiveCourt: ObservableObject {
     /// Called on the MAIN thread whenever a new court map is adopted, so the
     /// detector and the contact detector can be re-pointed at it.
     var onUpdate: ((Calibration) -> Void)?
+    /// Called on the MAIN thread when the camera starts or stops moving.
+    var onMovingChanged: ((Bool) -> Void)?
 
     // Tuning, matching live.py.
-    private let sampleEvery = 10          // frames between ring-buffer samples
-    private let bufferCount = 12          // samples medianed (~4s at 30fps)
+    /// Samples are spaced by TIME, not frame count. Counting frames ties the
+    /// spacing to however fast the device happens to be running - at ~10fps a
+    /// stride of 10 meant one sample per second and an eight-second wait before
+    /// the first attempt. What the spacing actually has to guarantee is that the
+    /// PLAYERS MOVE between samples, so the median erases them; that is a
+    /// property of wall-clock time, not of frames.
+    private let sampleInterval: TimeInterval = 0.4
+    private let bufferCount = 8           // ~3s of span at 0.4s spacing
+    private let minSamples = 6            // enough to median; first try at ~2.4s
     private let retrySeconds: TimeInterval = 15      // while there is NO map
     private let revalidateSeconds: TimeInterval = 120 // with a map, drift check
     private let driftSupport = 0.70       // below this, something moved
+    /// Mean per-pixel difference between consecutive samples above which the
+    /// camera is judged to be MOVING, so the buffer is thrown away and
+    /// detection waits for it to be still. Deliberately high: a player running
+    /// across a static frame changes a small fraction of pixels, a camera being
+    /// carried changes nearly all of them.
+    private static let movementMeanDiff = 12.0
     private let minSupport = 0.80         // adopt only a confident fit (LOW_SUPPORT)
 
     /// Detection runs at this width; frames are downscaled to it. 1280 keeps a
@@ -66,10 +81,18 @@ final class LiveCourt: ObservableObject {
     private let lock = NSLock()
     private var ring: [[UInt8]] = []
     private var ringW = 0, ringH = 0
-    private var frameIndex = 0
+    private var lastSample = Date.distantPast
     private var busy = false
-    private var lastAttempt = Date()
+    /// `.distantPast`, not `Date()`: the retry gap exists to space out repeated
+    /// attempts, and applying it before the FIRST one made the app sit doing
+    /// nothing for 15s after the buffer was already full. Now the first attempt
+    /// runs as soon as there are enough still frames to median (~8s), and only
+    /// subsequent tries wait.
+    private var lastAttempt = Date.distantPast
     private var current: Calibration?
+    /// True while the camera is being moved - published so the UI can say so
+    /// rather than showing a stalled "finding court".
+    @Published private(set) var isMoving = false
     private let queue = DispatchQueue(label: "court.detect", qos: .utility)
 
     /// Throw away the current map and start hunting again immediately.
@@ -107,14 +130,15 @@ final class LiveCourt: ObservableObject {
     /// Offer the current camera frame.
     ///
     /// The stride check comes FIRST, before the conversion. Converting and then
-    /// discarding 9 frames in 10 meant a full-frame colour conversion 60 times a
+    /// discarding 9 frames in 10 meant a full-frame color conversion 60 times a
     /// second on the capture thread for work that was thrown away - the capture
     /// thread is also where the two Core ML models run, so that is stolen
     /// directly from the frame rate.
     func offer(_ pixelBuffer: CVPixelBuffer) {
         lock.lock()
-        frameIndex += 1
-        let take = frameIndex % sampleEvery == 0
+        let now = Date()
+        let take = now.timeIntervalSince(lastSample) >= sampleInterval
+        if take { lastSample = now }
         lock.unlock()
         guard take else { return }
 
@@ -122,11 +146,28 @@ final class LiveCourt: ObservableObject {
 
         lock.lock()
         if ringW != w || ringH != h { ring.removeAll(); ringW = w; ringH = h }
+
+        // THROW THE BUFFER AWAY IF THE CAMERA IS MOVING. The median only
+        // removes players because everything else holds still; sample it while
+        // the phone is being carried and aimed and it blends several viewpoints
+        // into smear. Pulled from a real device, the frame the detector was
+        // handed was exactly that: chain-link fence at four angles and a blur
+        // where a hand passed the lens, with no court in it at all - so
+        // detection "failed" on an input no algorithm could have used.
+        // Starting the buffer over on movement means the first STILL stretch
+        // after mounting is what gets used, instead of a mixture of the two.
+        if let last = ring.last, Self.differs(last, gray) {
+            ring.removeAll()
+            lock.unlock()
+            DispatchQueue.main.async { if !self.isMoving { self.isMoving = true; self.onMovingChanged?(true) } }
+            return
+        }
+        DispatchQueue.main.async { if self.isMoving { self.isMoving = false; self.onMovingChanged?(false) } }
         ring.append(gray)
         if ring.count > bufferCount { ring.removeFirst() }
 
         let gap = (current == nil) ? retrySeconds : revalidateSeconds
-        guard !busy, ring.count >= min(8, bufferCount),
+        guard !busy, ring.count >= minSamples,
               Date().timeIntervalSince(lastAttempt) >= gap else { lock.unlock(); return }
         lastAttempt = Date()
         busy = true
@@ -227,6 +268,26 @@ final class LiveCourt: ObservableObject {
         }
     }
 
+    /// Is the scene meaningfully different between two samples - i.e. did the
+    /// camera move?
+    ///
+    /// Sampled coarsely (every 16th pixel) because this runs on the capture
+    /// thread and only needs to distinguish "someone is carrying the phone"
+    /// from "a player ran across the court". Players moving inside a static
+    /// frame change a small fraction of pixels; a camera that has moved changes
+    /// nearly all of them, so the threshold is deliberately high.
+    private static func differs(_ a: [UInt8], _ b: [UInt8]) -> Bool {
+        guard a.count == b.count, a.count > 0 else { return true }
+        var sum = 0, n = 0
+        var i = 0
+        while i < a.count {
+            sum += abs(Int(a[i]) - Int(b[i]))
+            n += 1
+            i += 16
+        }
+        return n > 0 && Double(sum) / Double(n) > movementMeanDiff
+    }
+
     /// Per-pixel median - players and the ball vanish, the court stays. The
     /// SAMPLING STRIDE is what makes this work: consecutive frames have the
     /// players in the same place, so they would survive the median.
@@ -248,7 +309,7 @@ final class LiveCourt: ObservableObject {
 
     /// Luma plane of a 420f/420v buffer (or BGRA converted), downscaled to
     /// `targetWidth`. Grayscale is all CourtDetect needs, and the luma plane is
-    /// already exactly that - no colour conversion required for the common case.
+    /// already exactly that - no color conversion required for the common case.
     static func grayscale(_ pb: CVPixelBuffer, targetWidth: Int) -> ([UInt8], Int, Int)? {
         CVPixelBufferLockBaseAddress(pb, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }

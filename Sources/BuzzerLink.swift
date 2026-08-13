@@ -1,7 +1,7 @@
 // BuzzerLink.swift
 //
 // CoreBluetooth link to the Shelly BLU Button Tough 1 - the alert output.
-// Swift port of the Python prototype's `src/buzzer.py`; the BEHAVIOUR is what
+// Swift port of the Python prototype's `src/buzzer.py`; the BEHAVIOR is what
 // carries over, and every rule here was paid for on real hardware (see that
 // repo's CLAUDE.md, "The buzzer"):
 //
