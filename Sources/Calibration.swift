@@ -23,6 +23,33 @@ struct Calibration: Codable {
     /// Map a court-meter point back to image pixels.
     func toImage(_ p: CGPoint) -> CGPoint { Hinv.apply(p) }
 
+    // MARK: - Changing pixel space
+
+    /// The same court map expressed against an image `k` times larger.
+    ///
+    /// A homography is tied to the pixel grid it was fitted on, and this app
+    /// has two of them: court detection runs on a downscale, while Vision and
+    /// every overlay work on the full camera buffer. Converting between them is
+    /// a similarity on the IMAGE side only - the court-meter side is untouched
+    /// - so H composes with a 1/k scale on its input, and Hinv with a k scale
+    /// on its output.
+    func scaled(by k: Double) -> Calibration {
+        guard k > 0, k != 1 else { return self }
+        var h = homography, hi = homographyInv
+        for r in 0..<3 { h[r * 3] /= k; h[r * 3 + 1] /= k }   // H: (image/k) -> meters
+        for c in 0..<6 { hi[c] *= k }                          // Hinv: meters -> image*k
+        return Calibration(frameWidth: Int((Double(frameWidth) * k).rounded()),
+                           frameHeight: Int((Double(frameHeight) * k).rounded()),
+                           imagePoints: imagePoints.map { [$0[0] * k, $0[1] * k] },
+                           homography: h, homographyInv: hi)
+    }
+
+    /// This map re-expressed for a frame `width` pixels wide - used to score a
+    /// stored (native-space) map against a detection-space line mask.
+    func scaled(toFrameWidth width: Int) -> Calibration {
+        scaled(by: Double(width) / Double(frameWidth))
+    }
+
     // MARK: - Build from tapped points
 
     /// Fit from the points the user tapped (pixel space) against the known

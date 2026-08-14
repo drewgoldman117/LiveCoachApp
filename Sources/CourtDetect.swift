@@ -93,6 +93,17 @@ enum CourtDetect {
     static let maxPoolLines = 40
     static let maxHLines = 8
     static let maxVLines = 7
+    /// Two Hough lines are the same line if their normals agree AND their
+    /// offsets are within this fraction of the image diagonal. It was 0.02 -
+    /// 32px on a 1280x960 phone frame, wide enough to swallow a genuinely
+    /// different court line. Measured on the phone's own frame: at a fixed vote
+    /// threshold, tightening this to 0.005 took the merged pool from 12 lines
+    /// to 29, and the lines being eaten are the ones the far court is short of.
+    static let mergeOffsetFrac = 0.005
+    /// A court presents four constant-Y lines and five constant-X lines.
+    /// Settling for two of each - all a homography strictly needs - leaves the
+    /// search choosing between a handful of hypotheses, none necessarily right.
+    static let minFamilyLines = 4
     static let minInFrameFrac = 0.55
     static let minDepthRatio = 0.15
     /// The projected court must be a plausible SIZE in the image, not merely a
@@ -101,14 +112,44 @@ enum CourtDetect {
     /// height - after latching onto a small cluster of background lines. That
     /// fit satisfied depth ratio (0.46), convexity, ordering and support, and
     /// was saved as the court map. Real courts with the camera behind the
-    /// baseline: roy 48% of frame height, dad_clip1 44% even badly mounted.
-    static let minCourtHeightFrac = 0.15
+    /// baseline: 42-55% of frame height across all seven reference clips, and
+    /// 26% for a correct fit on this app's own tighter 4:3 framing.
+    ///
+    /// 0.15 was still too generous. On court it let through a fit that landed
+    /// the whole model on the FAR side of the net, up among the background
+    /// courts and fence - a court that looked like a court, drawn small and in
+    /// the wrong place - spanning 15.3% of frame height. It cleared the old
+    /// gate by three tenths of a percent. 0.20 rejects it and still leaves 6
+    /// points under the tightest correct fit measured.
+    static let minCourtHeightFrac = 0.20
+    /// ...and the near baseline must sit in the LOWER HALF of the frame. The
+    /// camera stands behind its own baseline, so that baseline is the nearest
+    /// thing on court and lands low; a fit that puts it high has found its
+    /// "court" in the background. Measured: 67-91% down the frame on the seven
+    /// reference clips and 57% on a correct, steeply-aimed phone frame, against
+    /// 40% for the background-court fit this rejects.
+    ///
+    /// It earns its keep beside minCourtHeightFrac rather than duplicating it:
+    /// that gate asks how BIG the court is, this asks WHERE it is, and the fit
+    /// they both catch passed the size test on its own.
+    static let minNearBaselineFrac = 0.50
+    /// EVERY model line that is in frame must find paint of its own, rather
+    /// than merely contributing to a good average. Aggregate support divides
+    /// over every sample on every line, so one model line lying on nothing
+    /// barely moves it - which is how this app's first on-court fit read 0.87
+    /// while its near service line had 40% of its samples on paint and its far
+    /// half sat on the NET (whose tape and lower edge are genuine thin bright
+    /// structures, so they score exactly like paint).
+    static let minLineSupport = 0.55
+    static let lineMinInFrame = 0.6         // below this a model line is off-screen
+    static let weakLinePenalty = 0.75       // score multiplier when a visible line found nothing
+    static let offCenterPenalty = 0.85      // ...and when a visible center mark disagrees with x=0
     static let shortlistCount = 250
     static let completenessScale = 640.0
 
     /// Segments scored for SUPPORT: painted on every singles court, so a
     /// correct homography must find support along all of them. Doubles lines
-    /// are excluded - a court without them must not be penalised.
+    /// are excluded - a court without them must not be penalized.
     static var scoringSegments: [(CGPoint, CGPoint)] {
         var segs = modelY.map {
             (CGPoint(x: -Court.halfWidthM, y: $0), CGPoint(x: Court.halfWidthM, y: $0))
@@ -119,7 +160,7 @@ enum CourtDetect {
         return segs
     }
 
-    /// Segments rasterised for COMPLETENESS: everything actually painted on a
+    /// Segments rasterized for COMPLETENESS: everything actually painted on a
     /// doubles-marked court. See the header - omitting the alley inverts this
     /// metric on the very fit it most needs to reject.
     static var completenessSegments: [(CGPoint, CGPoint)] {
@@ -261,7 +302,7 @@ enum CourtDetect {
         var merged: [CourtLine] = []
         for l in lines {
             let dup = merged.contains { m in
-                abs(l.a - m.a) < 0.06 && abs(l.b - m.b) < 0.06 && abs(l.c - m.c) < diag * 0.02
+                abs(l.a - m.a) < 0.06 && abs(l.b - m.b) < 0.06 && abs(l.c - m.c) < diag * mergeOffsetFrac
             }
             if !dup { merged.append(l) }
         }
@@ -368,6 +409,152 @@ enum CourtDetect {
         }
         let n = Double(samples.count)
         return (Double(hits) / n, Double(inside) / n)
+    }
+
+    /// Support of the WORST individual model line, ignoring lines that are
+    /// mostly off-screen (tight framing can legitimately push the far baseline
+    /// off the top; `minInFrameFrac` already covers that case). See
+    /// `minLineSupport` for the failure this exists to catch.
+    static func weakestLineSupport(_ hInv: Homography, support: [UInt8],
+                                   width w: Int, height h: Int) -> Double {
+        let m = hInv.m
+        let n = samplesPerSegment
+        var worst = 1.0
+        var anyVisible = false
+        for seg in 0..<(samples.count / n) {
+            var hits = 0, inside = 0
+            for i in 0..<n {
+                let p = samples[seg * n + i]
+                let x = Double(p.x), y = Double(p.y)
+                let z = m[6] * x + m[7] * y + m[8]
+                guard abs(z) > 1e-9 else { continue }
+                let px = (m[0] * x + m[1] * y + m[2]) / z
+                let py = (m[3] * x + m[4] * y + m[5]) / z
+                guard px >= 0, px < Double(w), py >= 0, py < Double(h) else { continue }
+                inside += 1
+                if support[Int(py) * w + Int(px)] > 0 { hits += 1 }
+            }
+            guard Double(inside) / Double(n) >= lineMinInFrame else { continue }
+            anyVisible = true
+            worst = min(worst, Double(hits) / Double(n))
+        }
+        return anyVisible ? worst : 0.0
+    }
+
+    // MARK: - The baseline center mark (the "notch")
+
+    /// Every baseline carries a center mark: 10cm long, 5cm wide, perpendicular
+    /// to the line and drawn INSIDE the court. It is the only feature on the
+    /// court that fixes x=0 by itself, so it is the one cue that catches a fit
+    /// which is laterally shifted but otherwise sitting on real paint - the
+    /// error a court full of parallel lines is most prone to, and one the line
+    /// residual cannot see at all, since a shifted fit is still on paint.
+    static let centerMarkMinPxPerM = 60.0   // below this a 10cm mark is a pixel or two
+    static let centerMarkMinBumpM = 0.04    // thickness excess that counts as the mark
+    static let centerMarkTolM = 0.30        // how far off x=0 it may sit and still agree
+
+    /// Where the near baseline's center mark sits, in court meters from the
+    /// model's x=0, or nil when it cannot be resolved - in which case it must
+    /// influence nothing, since plenty of courts are filmed too far away to
+    /// show a 10cm mark.
+    ///
+    /// Measured as a THICKNESS bump across the line, not as paint in a band in
+    /// front of it. The mark is 10cm long and the baseline itself is 5cm wide,
+    /// so the band holding the mark but not the line is ~5cm - tighter than the
+    /// fit error this is meant to detect. Measured on the reference clips, that
+    /// band put the peak at the scan edge on 5 of 7. Thickness tolerates a few
+    /// pixels of error in either direction: the line is 5cm wide everywhere and
+    /// ~15cm at the center.
+    static func centerMarkOffsetM(_ hInv: Homography, mask: [UInt8],
+                                  width w: Int, height h: Int) -> Double? {
+        let l = hInv.apply(CGPoint(x: -Court.halfWidthM, y: 0))
+        let r = hInv.apply(CGPoint(x: Court.halfWidthM, y: 0))
+        guard Double(l.x).isFinite, Double(r.x).isFinite else { return nil }
+        let dx = Double(r.x - l.x), dy = Double(r.y - l.y)
+        let pxPerM = (dx * dx + dy * dy).squareRoot() / (2 * Court.halfWidthM)
+        guard pxPerM >= centerMarkMinPxPerM else { return nil }
+
+        let xStep = 0.04, yStep = 0.02
+        let nx = Int((3.0 / xStep).rounded()) + 1        // x from -1.5 to +1.5
+        let ny = Int((0.35 / yStep).rounded()) + 1       // y from -0.10 to +0.25
+        let m = hInv.m
+        var thickness = [Double](repeating: 0, count: nx)
+        for ix in 0..<nx {
+            let x = -1.5 + Double(ix) * xStep
+            var hits = 0
+            for iy in 0..<ny {
+                let y = -0.10 + Double(iy) * yStep
+                let z = m[6] * x + m[7] * y + m[8]
+                guard abs(z) > 1e-9 else { continue }
+                let px = (m[0] * x + m[1] * y + m[2]) / z
+                let py = (m[3] * x + m[4] * y + m[5]) / z
+                guard px >= 0, px < Double(w), py >= 0, py < Double(h) else { continue }
+                if mask[Int(py) * w + Int(px)] > 0 { hits += 1 }
+            }
+            thickness[ix] = Double(hits) * yStep
+        }
+        guard let peak = thickness.indices.max(by: { thickness[$0] < thickness[$1] }),
+              thickness[peak] > 0 else { return nil }
+        var sorted = thickness
+        sorted.sort()
+        let median = sorted[sorted.count / 2]
+        guard thickness[peak] - median >= centerMarkMinBumpM else { return nil }
+        return abs(-1.5 + Double(peak) * xStep)
+    }
+
+    // MARK: - The playing surface
+
+    /// Every other check here reasons about white LINES, and the frame is
+    /// reduced to a line mask before anything looks at it - so the court's
+    /// biggest and most obvious feature, the large uniform surface those lines
+    /// are painted on, is evidence nothing else uses. That is exactly what the
+    /// on-court failure lacked: a fit that landed on the fence, the trees and
+    /// the court behind scored well on lines while its interior was visibly not
+    /// one surface.
+    ///
+    /// Measured over the near half only, since a low mount can hide the far
+    /// half behind the net. Interior uniformity on real courts (luma, tol 14):
+    /// 54-94% across the seven reference clips, against 18% for the fit this
+    /// app drew in the wrong place. 0.40 sits clear of both.
+    static let surfaceTol = 14.0
+    static let minSurfaceUniformity = 0.40
+    static let surfacePenalty = 0.5
+
+    private static let surfacePoints: [CGPoint] = {
+        var pts: [CGPoint] = []
+        for i in 0..<13 {
+            let x = -Court.halfWidthM + 0.6 + (2 * Court.halfWidthM - 1.2) * Double(i) / 12
+            for j in 0..<13 {
+                pts.append(CGPoint(x: x, y: 0.8 + (10.5 - 0.8) * Double(j) / 12))
+            }
+        }
+        return pts
+    }()
+
+    /// Fraction of interior samples within `surfaceTol` of the interior median:
+    /// "is the thing inside these lines a single playing surface?" - the
+    /// question a person answers instantly and the line scoring cannot ask.
+    static func surfaceUniformity(_ hInv: Homography, gray: [UInt8],
+                                  width w: Int, height h: Int) -> Double {
+        let m = hInv.m
+        var vals: [Double] = []
+        vals.reserveCapacity(surfacePoints.count)
+        for p in surfacePoints {
+            let x = Double(p.x), y = Double(p.y)
+            let z = m[6] * x + m[7] * y + m[8]
+            guard abs(z) > 1e-9 else { continue }
+            let px = (m[0] * x + m[1] * y + m[2]) / z
+            let py = (m[3] * x + m[4] * y + m[5]) / z
+            guard px >= 0, px < Double(w), py >= 0, py < Double(h) else { continue }
+            vals.append(Double(gray[Int(py) * w + Int(px)]))
+        }
+        // Too little of the court visible to judge - don't penalize.
+        guard vals.count >= 40 else { return 1.0 }
+        var sorted = vals
+        sorted.sort()
+        let median = sorted[sorted.count / 2]
+        let near = vals.reduce(0) { $0 + (abs($1 - median) < surfaceTol ? 1 : 0) }
+        return Double(near) / Double(vals.count)
     }
 
     /// Fraction of detected line pixels the projected court model EXPLAINS.
@@ -489,6 +676,10 @@ enum CourtDetect {
         if let fh = frameHeight {
             let depthPx = min(Double(nl.y), Double(nr.y)) - max(Double(fl.y), Double(fr.y))
             if depthPx < minCourtHeightFrac * fh { return false }
+            // ...and WHERE it sits, not only how big it is - see
+            // minNearBaselineFrac. Averaged over the two near corners so a
+            // tilted camera isn't judged on whichever corner rides higher.
+            if (Double(nl.y) + Double(nr.y)) / 2 < minNearBaselineFrac * fh { return false }
         }
         var signs = 0.0                                                // convex, no bow-tie
         for i in 0..<4 {
@@ -629,7 +820,7 @@ enum CourtDetect {
     // MARK: - 8. The search
 
     private static func search(hs: [CourtLine], vs: [CourtLine],
-                               mask: [UInt8], support: [UInt8],
+                               mask: [UInt8], support: [UInt8], gray: [UInt8],
                                width w: Int, height h: Int) -> CourtDetection? {
         let scale = completenessScale / Double(max(w, h))
         let sw = Int(Double(w) * scale), sh = Int(Double(h) * scale)
@@ -726,7 +917,29 @@ enum CourtDetect {
             if !plausiblePose(cand.1, frameHeight: Double(h)) { cand = (hh, hi) }
             let sup = scoreHomography(cand.1, support: support, width: w, height: h).support
             let comp = completeness(cand.1, smallMask: smallMask, width: sw, height: sh, scale: scale)
-            if sup * comp > bestCombined { bestCombined = sup * comp; best = cand }
+            // Both priors are WEIGHTS on the score, never tie-breaks ranked
+            // above it. Ranked above, a binary prior lets a far worse fit win
+            // on one weak signal: measured on this phone's own dumped frame,
+            // ranking the center mark first swapped a 0.87-support fit for a
+            // 0.61-support one whose near baseline ran 1200px off-screen and
+            // whose notch happened to line up. As a multiplier each can break
+            // a near-tie - the ambiguity they exist to resolve - and cannot
+            // overturn a decisively better fit.
+            var combined = sup * comp
+            if weakestLineSupport(cand.1, support: support, width: w, height: h) < minLineSupport {
+                combined *= weakLinePenalty
+            }
+            // The center mark votes only when it can be seen; nil (too few
+            // pixels per meter, or no bump) costs nothing.
+            if let off = centerMarkOffsetM(cand.1, mask: mask, width: w, height: h),
+               off > centerMarkTolM {
+                combined *= offCenterPenalty
+            }
+            // ...and does the region inside the lines look like a court at all?
+            if surfaceUniformity(cand.1, gray: gray, width: w, height: h) < minSurfaceUniformity {
+                combined *= surfacePenalty
+            }
+            if combined > bestCombined { bestCombined = combined; best = cand }
         }
         guard let (bh, bhi) = best else { return nil }
 
@@ -738,20 +951,40 @@ enum CourtDetect {
                               completeness: comp, linesMatched: matched, imagePoints: pts)
     }
 
+    /// How many model lines found a detected line, matched ONE-TO-ONE.
+    ///
+    /// The one-to-one part matters and used to be missing: each model line
+    /// asked independently whether ANY detected line was near it, with nothing
+    /// marking a line as spoken for, so one physical line could satisfy two
+    /// model lines at once. "6 lines matched" could then mean six model lines
+    /// sharing three real ones - exactly the shape of a fit that crams its far
+    /// half onto the net. Matched greedily by distance, so the closest and most
+    /// confident pairing claims its line first.
     private static func countMatched(_ hInv: Homography, hs: [CourtLine], vs: [CourtLine],
                                      tolPx: Double = 12.0) -> Int {
-        var n = 0
-        for val in modelY {
-            let pa = hInv.apply(CGPoint(x: -Court.halfWidthM, y: val))
-            let pb = hInv.apply(CGPoint(x: Court.halfWidthM, y: val))
-            if hs.contains(where: { 0.5 * ($0.distance(to: pa) + $0.distance(to: pb)) < tolPx }) { n += 1 }
+        struct Pair { let d: Double; let model: Int; let line: Int }
+        var pairs: [Pair] = []
+        func collect(_ vals: [Double], _ lines: [CourtLine], _ tag: Int,
+                     _ ends: (Double) -> (CGPoint, CGPoint)) {
+            for (mi, val) in vals.enumerated() {
+                let (a, b) = ends(val)
+                let pa = hInv.apply(a), pb = hInv.apply(b)
+                for (li, l) in lines.enumerated() {
+                    let d = 0.5 * (l.distance(to: pa) + l.distance(to: pb))
+                    if d < tolPx { pairs.append(Pair(d: d, model: tag * 100 + mi, line: tag * 1000 + li)) }
+                }
+            }
         }
-        for val in modelX {
-            let pa = hInv.apply(CGPoint(x: val, y: 0))
-            let pb = hInv.apply(CGPoint(x: val, y: Court.lengthM))
-            if vs.contains(where: { 0.5 * ($0.distance(to: pa) + $0.distance(to: pb)) < tolPx }) { n += 1 }
+        collect(modelY, hs, 0) { (CGPoint(x: -Court.halfWidthM, y: $0), CGPoint(x: Court.halfWidthM, y: $0)) }
+        collect(modelX, vs, 1) { (CGPoint(x: $0, y: 0), CGPoint(x: $0, y: Court.lengthM)) }
+
+        var usedModel = Set<Int>(), usedLine = Set<Int>()
+        for p in pairs.sorted(by: { $0.d < $1.d }) {
+            if usedModel.contains(p.model) || usedLine.contains(p.line) { continue }
+            usedModel.insert(p.model)
+            usedLine.insert(p.line)
         }
-        return n
+        return usedModel.count
     }
 
     // MARK: - 9. Entry point
@@ -779,13 +1012,26 @@ enum CourtDetect {
 
             // Enough votes to be a court line, scaled to the frame; back off
             // until there are enough candidates to group.
+            //
+            // Take the RICHEST pool the thresholds offer, not the first
+            // workable one. Stopping as soon as each family had two lines meant
+            // settling for whatever the strictest threshold happened to yield:
+            // measured on this phone's own dumped frame that was 3 horizontals
+            // and 2 verticals, while a lower threshold on the SAME frame finds
+            // 8 and 7. Two lines per family is enough to SOLVE a homography and
+            // nowhere near enough to identify the right one, so the search was
+            // picking among a handful of hypotheses that mostly didn't include
+            // the correct fit. This is why recorded clips looked fine while the
+            // phone did not - the desktop clips clear the strictest threshold
+            // with 7 and 5 lines already and never depended on the fallback.
             var famA: [CourtLine] = [], famB: [CourtLine] = []
             for frac in [0.28, 0.18, 0.11, 0.07] {
                 let votes = max(40, Int(Double(h) * frac))
                 let raw = houghLines(mask, width: w, height: h, minVotes: votes)
                 let pool = Array(mergeLines(raw, width: w, height: h).prefix(maxPoolLines))
-                (famA, famB) = groupLines(pool, width: w, height: h)
-                if famA.count >= 2 && famB.count >= 2 { break }
+                let (a, b) = groupLines(pool, width: w, height: h)
+                if min(a.count, b.count) > min(famA.count, famB.count) { (famA, famB) = (a, b) }
+                if min(famA.count, famB.count) >= minFamilyLines { break }
             }
             if famA.count < 2 || famB.count < 2 { continue }
 
@@ -793,14 +1039,30 @@ enum CourtDetect {
             // heuristic for it would be fragile - so try both and let the score
             // decide. Costs one extra search, buys robustness to camera pose.
             for (horiz, vert) in [(famA, famB), (famB, famA)] {
-                let hs = Array(orderFamily(horiz, width: w, height: h, asHorizontal: true).prefix(maxHLines))
-                let vs = Array(orderFamily(vert, width: w, height: h, asHorizontal: false).prefix(maxVLines))
+                // Truncate by STRENGTH, then sort by position - never the other
+                // way round. `groupLines` preserves the Hough vote order it was
+                // given, so a family is still strongest-first here; ordering by
+                // position and then truncating keeps the eight lines HIGHEST in
+                // the frame, which on a phone view means fence rails and the
+                // court behind, and discards the near baseline - the lowest
+                // line there is.
+                let hs = orderFamily(Array(horiz.prefix(maxHLines)), width: w, height: h, asHorizontal: true)
+                let vs = orderFamily(Array(vert.prefix(maxVLines)), width: w, height: h, asHorizontal: false)
                 if hs.count < 2 || vs.count < 2 { continue }
-                if let cand = search(hs: hs, vs: vs, mask: mask, support: support, width: w, height: h),
+                if let cand = search(hs: hs, vs: vs, mask: mask, support: support, gray: gray, width: w, height: h),
                    best == nil || cand.score > best!.score {
                     best = cand
                 }
             }
+        }
+        // Refuse outright if the winner's interior isn't a playing surface. The
+        // penalty alone only reorders candidates - when every hypothesis is
+        // wrong it still returns one, and a confidently-wrong court then gets
+        // saved and seeds every later session. Reporting no court and carrying
+        // on looking is the better failure.
+        if let b = best,
+           surfaceUniformity(b.homographyInv, gray: gray, width: w, height: h) < minSurfaceUniformity {
+            return nil
         }
         return best
     }

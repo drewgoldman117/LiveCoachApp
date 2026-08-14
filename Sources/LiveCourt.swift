@@ -69,6 +69,10 @@ final class LiveCourt: ObservableObject {
     /// across a static frame changes a small fraction of pixels, a camera being
     /// carried changes nearly all of them.
     private static let movementMeanDiff = 12.0
+    /// Below this, nothing in the scene is moving - an empty court. Sensor
+    /// noise and a breeze in the trees put consecutive samples around 1-2, so
+    /// 3.0 clears that while a single walking player sits well above it.
+    private static let staticMeanDiff = 3.0
     private let minSupport = 0.80         // adopt only a confident fit (LOW_SUPPORT)
 
     /// Detection runs at this width; frames are downscaled to it. 1280 keeps a
@@ -142,10 +146,24 @@ final class LiveCourt: ObservableObject {
         lock.unlock()
         guard take else { return }
 
+        // The NATIVE buffer size, which is not the size detection runs at - see
+        // `finish`. Everything downstream (Vision boxes, the overlay's
+        // AspectFit) works in these coordinates.
+        let nativeW = CVPixelBufferGetWidth(pixelBuffer)
+
         guard let (gray, w, h) = LiveCourt.grayscale(pixelBuffer, targetWidth: detectWidth) else { return }
 
         lock.lock()
         if ringW != w || ringH != h { ring.removeAll(); ringW = w; ringH = h }
+
+        // Self-heal a map stored against a different pixel grid: one saved by a
+        // build that published detection-space coordinates, or one from a
+        // session whose capture format differed. Without this such a map is
+        // silently reused at the wrong scale, which is the failure this whole
+        // change exists to fix.
+        if let c = current, c.frameWidth != nativeW {
+            current = c.scaled(toFrameWidth: nativeW)
+        }
 
         // THROW THE BUFFER AWAY IF THE CAMERA IS MOVING. The median only
         // removes players because everything else holds still; sample it while
@@ -166,8 +184,21 @@ final class LiveCourt: ObservableObject {
         ring.append(gray)
         if ring.count > bufferCount { ring.removeFirst() }
 
+        // AN EMPTY COURT NEEDS NO MEDIAN. The median exists solely to erase
+        // players; with nobody on court there is nothing to erase, and waiting
+        // 2.4s to average six identical frames is a tax paid for a problem that
+        // isn't there. If consecutive samples are near-identical the scene is
+        // static, so one frame is as good as six and setup becomes immediate.
+        //
+        // The threshold sits far below `movementMeanDiff`, which asks a
+        // different question: that one separates a camera being carried from
+        // players running, this one asks whether ANYTHING is moving at all.
+        let sceneStatic = ring.count >= 2
+            && Self.meanDiff(ring[ring.count - 2], ring[ring.count - 1]) < Self.staticMeanDiff
+        let needed = sceneStatic ? 2 : minSamples
+
         let gap = (current == nil) ? retrySeconds : revalidateSeconds
-        guard !busy, ring.count >= minSamples,
+        guard !busy, ring.count >= needed,
               Date().timeIntervalSince(lastAttempt) >= gap else { lock.unlock(); return }
         lastAttempt = Date()
         busy = true
@@ -177,20 +208,38 @@ final class LiveCourt: ObservableObject {
         queue.async { [weak self] in
             guard let self else { return }
             let det = LiveCourt.work(frames: frames, width: w, height: h,
-                                     existing: existing, driftSupport: self.driftSupport,
+                                     existing: existing?.scaled(toFrameWidth: w),
+                                     driftSupport: self.driftSupport,
                                      minSupport: self.minSupport)
-            self.finish(det, width: w, height: h)
+            self.finish(det, width: w, height: h, nativeWidth: nativeW)
         }
     }
 
-    private func finish(_ det: CourtDetection?, width: Int, height: Int) {
+    /// PUBLISH IN NATIVE BUFFER COORDINATES, NOT DETECTION COORDINATES.
+    ///
+    /// Detection runs on a `detectWidth`-wide downscale, so the homography it
+    /// returns maps 1280x960 pixels to meters. Everything that consumes a
+    /// Calibration works in the FULL buffer's pixels: Vision reports boxes
+    /// against `CVPixelBufferGetWidth`, and every overlay is drawn through
+    /// `AspectFit(videoSize: camera.videoSize)`, which is also the native size.
+    /// Handing those consumers a detection-space homography scales the entire
+    /// court by nativeWidth/detectWidth.
+    ///
+    /// Measured on a real device at 1920x1440 native: exactly 1.5x. The court
+    /// was drawn with its near baseline at screen row 430 where the fit put it
+    /// at 828 - "the right shape, too small, in the wrong place" - while the
+    /// player boxes, already in native coordinates, landed correctly. The same
+    /// factor silently corrupted every player position the alert depends on,
+    /// which is the part that does not show up as a drawing glitch.
+    private func finish(_ det: CourtDetection?, width: Int, height: Int, nativeWidth: Int) {
         lock.lock()
         busy = false
         guard let det else { lock.unlock(); return }
+        let k = Double(nativeWidth) / Double(width)
         let cal = Calibration(frameWidth: width, frameHeight: height,
                               imagePoints: det.imagePoints.map { [Double($0.x), Double($0.y)] },
                               homography: det.homography.m,
-                              homographyInv: det.homographyInv.m)
+                              homographyInv: det.homographyInv.m).scaled(by: k)
         current = cal
         lock.unlock()
 
@@ -246,7 +295,9 @@ final class LiveCourt: ObservableObject {
         let verdict: String
         if let det {
             verdict = "support \(det.support)\ncompleteness \(det.completeness)\n"
-                + "linesMatched \(det.linesMatched)\nadopted \(det.support >= 0.80)\n"
+                + "linesMatched \(det.linesMatched) (one-to-one)\n"
+                + "surfaceUniformity \(CourtDetect.surfaceUniformity(det.homographyInv, gray: gray, width: w, height: h))\n"
+                + "adopted \(det.support >= 0.80)\n"
                 + "H \(det.homography.m)\n"
         } else {
             verdict = "no court in this attempt\n"
@@ -277,7 +328,14 @@ final class LiveCourt: ObservableObject {
     /// frame change a small fraction of pixels; a camera that has moved changes
     /// nearly all of them, so the threshold is deliberately high.
     private static func differs(_ a: [UInt8], _ b: [UInt8]) -> Bool {
-        guard a.count == b.count, a.count > 0 else { return true }
+        meanDiff(a, b) > movementMeanDiff
+    }
+
+    /// Mean absolute per-pixel difference, sampled every 16th pixel because
+    /// this runs on the capture thread. `.infinity` for mismatched buffers, so
+    /// every caller treats them as "changed" rather than "identical".
+    static func meanDiff(_ a: [UInt8], _ b: [UInt8]) -> Double {
+        guard a.count == b.count, a.count > 0 else { return .infinity }
         var sum = 0, n = 0
         var i = 0
         while i < a.count {
@@ -285,7 +343,7 @@ final class LiveCourt: ObservableObject {
             n += 1
             i += 16
         }
-        return n > 0 && Double(sum) / Double(n) > movementMeanDiff
+        return n > 0 ? Double(sum) / Double(n) : .infinity
     }
 
     /// Per-pixel median - players and the ball vanish, the court stays. The
