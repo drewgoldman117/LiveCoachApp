@@ -15,6 +15,17 @@ final class LivePipeline: ObservableObject {
     @Published var fps: Double = 0
     @Published var detectorReady = true
 
+    /// Ball detection rate over the last 10s, and the session's BEST window.
+    /// Ported from live.py's field-diagnostics HUD, and the two windows are
+    /// the point: the rate is naturally ~0 between points, so the live number
+    /// alone makes healthy tracking look broken after every rally - the best
+    /// window is the verdict on whether the model can see the ball on this
+    /// court at all. Healthy reference on footage known to work: 32-47%.
+    @Published var ballRate: Double = 0
+    @Published var ballRateBest: Double = 0
+    /// (timestamp, ball seen) for the rolling window - capture queue only.
+    private var ballWindow: [(t: CFTimeInterval, hit: Bool)] = []
+
     /// Accumulates this session so the home screen can report a real figure
     /// afterwards rather than a decorative one.
     let session = SessionTracker()
@@ -197,10 +208,20 @@ final class LivePipeline: ObservableObject {
             _ = cal
         }
 
+        // Rolling 10s ball-detection rate (capture queue owns ballWindow).
+        ballWindow.append((now, r.ballPx != nil))
+        while let first = ballWindow.first, now - first.t > 10 { ballWindow.removeFirst() }
+        let rate = Double(ballWindow.filter(\.hit).count) / Double(max(1, ballWindow.count))
+        // Only a reasonably full window may set the session best - a 1-frame
+        // window at session start would otherwise pin it to 0% or 100%.
+        let windowFull = (now - (ballWindow.first?.t ?? now)) > 8
+
         DispatchQueue.main.async {
             self.result = r
             // Exponential moving average so the HUD number is readable.
             self.fps = self.fps == 0 ? instantFPS : self.fps * 0.9 + instantFPS * 0.1
+            self.ballRate = rate
+            if windowFull { self.ballRateBest = max(self.ballRateBest, rate) }
             self.session.tick(fps: instantFPS)
             if let newFlash {
                 self.flash = newFlash
@@ -254,6 +275,8 @@ struct LiveView: View {
                 // arrive (or be replaced) mid-session.
                 OverlayView(result: pipeline.result,
                             calibration: pipeline.calibration,
+                            ballRate: pipeline.ballRate,
+                            ballRateBest: pipeline.ballRateBest,
                             videoSize: camera.videoSize,
                             viewSize: geo.size,
                             fps: pipeline.fps,
@@ -367,6 +390,8 @@ struct ChromeButton: View {
 struct OverlayView: View {
     let result: FrameResult
     let calibration: Calibration?
+    let ballRate: Double
+    let ballRateBest: Double
     let videoSize: CGSize
     let viewSize: CGSize
     let fps: Double
@@ -555,9 +580,10 @@ struct OverlayView: View {
     }
 
     private func drawHUD(_ ctx: GraphicsContext) {
-        let text = String(format: "%.0f fps · %.0f ms · %d players%@",
+        let text = String(format: "%.0f fps · %.0f ms · %d players · BALL %.0f%%%@",
                           fps, result.latencyMs, result.players.count,
-                          result.ballPx == nil ? "" : " · ball")
+                          ballRate * 100,
+                          ballRateBest > 0 ? String(format: " (best %.0f%%)", ballRateBest * 100) : "")
         // GraphicsContext.draw only takes a plain Text, so draw the pill
         // background ourselves, then the resolved text on top.
         let resolved = ctx.resolve(Text(text).font(.caption.monospaced()).foregroundStyle(.white))
