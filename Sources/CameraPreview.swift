@@ -51,6 +51,15 @@ struct CameraPreview: UIViewRepresentable {
         func applyRotation() {
             guard let conn = videoPreviewLayer.connection else { return }
             CameraManager.apply(CameraManager.landscapeAngle, to: conn)
+            // Never mirror, front camera included. The capture buffers are
+            // deliberately unmirrored (see CameraManager.configure) so the
+            // court's left stays left; a preview that auto-mirrors while the
+            // buffers don't would draw every overlay x-flipped. Looks unlike a
+            // selfie, and that is correct - this is a court monitor.
+            if conn.isVideoMirroringSupported {
+                conn.automaticallyAdjustsVideoMirroring = false
+                conn.isVideoMirrored = false
+            }
         }
 
         override func layoutSubviews() {

@@ -331,6 +331,14 @@ struct LiveView: View {
                 // case by design: it fires when a fit stops matching the paint,
                 // and a confidently-wrong court matches paint perfectly well.
                 if pipeline.calibration != nil {
+                    ChromeButton(title: "flip cam", systemImage: "arrow.triangle.2.circlepath.camera") {
+                        camera.flip()
+                        // A different camera is a different framing AND
+                        // different optics - the old homography describes
+                        // neither. Throw it away and let detection start over
+                        // on the new view.
+                        pipeline.resetCourt()
+                    }
                     ChromeButton(title: "reset court", systemImage: "arrow.counterclockwise") {
                         pipeline.resetCourt()
                     }

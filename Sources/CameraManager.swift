@@ -25,6 +25,11 @@ final class CameraManager: NSObject, ObservableObject {
     @Published private(set) var videoSize: CGSize = .zero
     @Published private(set) var actualFPS: Double = 0
     @Published private(set) var isAuthorized = false
+    /// Which camera is capturing. The front camera matters for the real
+    /// mounting problem: zip-tied to a fence, the SCREEN faces the court
+    /// exactly when the front camera does - so front is the only way to watch
+    /// the overlay while playing.
+    @Published private(set) var position: AVCaptureDevice.Position = .back
 
     /// Rotation applied to BOTH the capture output and the preview.
     ///
@@ -37,6 +42,10 @@ final class CameraManager: NSObject, ObservableObject {
 
     private let videoQueue = DispatchQueue(label: "camera.video.queue")
     private let output = AVCaptureVideoDataOutput()
+    private var input: AVCaptureDeviceInput?
+    /// The position `configure` should use - read on videoQueue, unlike the
+    /// published `position`, which exists for the UI on the main thread.
+    private var desiredPosition: AVCaptureDevice.Position = .back
     /// Guards against republishing the same size 60 times a second.
     private var lastReportedSize: CGSize = .zero
 
@@ -52,6 +61,26 @@ final class CameraManager: NSObject, ObservableObject {
 
     func stop() {
         videoQueue.async { if self.session.isRunning { self.session.stopRunning() } }
+    }
+
+    /// Switch between the back and front cameras, live.
+    ///
+    /// Reconfigures on the session's own queue: the old input is removed and
+    /// the whole configure path re-runs, so the new device gets the same
+    /// 60fps format selection, rotation, and mirroring policy as the first.
+    func flip() {
+        let newPosition: AVCaptureDevice.Position = (desiredPosition == .back) ? .front : .back
+        desiredPosition = newPosition
+        DispatchQueue.main.async { self.position = newPosition }
+        videoQueue.async {
+            self.session.beginConfiguration()
+            if let old = self.input {
+                self.session.removeInput(old)
+                self.input = nil
+            }
+            self.session.commitConfiguration()
+            self.configure()
+        }
     }
 
     // MARK: - Setup
@@ -76,13 +105,15 @@ final class CameraManager: NSObject, ObservableObject {
         session.beginConfiguration()
         session.sessionPreset = .inputPriority   // let the chosen format drive resolution
 
-        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
-              let input = try? AVCaptureDeviceInput(device: device),
-              session.canAddInput(input) else {
+        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video,
+                                                    position: desiredPosition),
+              let newInput = try? AVCaptureDeviceInput(device: device),
+              session.canAddInput(newInput) else {
             session.commitConfiguration()
             return
         }
-        session.addInput(input)
+        session.addInput(newInput)
+        input = newInput
 
         selectBest60fpsFormat(for: device)
 
@@ -92,7 +123,20 @@ final class CameraManager: NSObject, ObservableObject {
         output.setSampleBufferDelegate(self, queue: videoQueue)
         if session.canAddOutput(output) { session.addOutput(output) }
 
-        for conn in output.connections { CameraManager.apply(Self.landscapeAngle, to: conn) }
+        for conn in output.connections {
+            CameraManager.apply(Self.landscapeAngle, to: conn)
+            // The buffers must be geometrically truthful for BOTH cameras. A
+            // front camera mirrors by convention (a selfie reads like a
+            // mirror); mirrored pixels would flip the court's left and right,
+            // and the coordinate convention (camera behind its own baseline,
+            // +X to the right) would silently invert. The preview layer is
+            // forced to match in CameraPreview - if preview and buffers
+            // disagree about mirroring, every overlay is drawn x-flipped.
+            if conn.isVideoMirroringSupported {
+                conn.automaticallyAdjustsVideoMirroring = false
+                conn.isVideoMirrored = false
+            }
+        }
         session.commitConfiguration()
         // videoSize is NOT set from the format here: see captureOutput. The
         // format reports the SENSOR's dimensions, which are not the delivered
