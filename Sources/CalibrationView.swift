@@ -28,7 +28,7 @@ struct CalibrationView: View {
         GeometryReader { geo in
             let fit = AspectFit(videoSize: camera.videoSize, viewSize: geo.size)
             ZStack {
-                CameraPreview(session: camera.session)
+                CameraPreview(session: camera.session, angle: camera.captureAngle)
 
                 Canvas { ctx, _ in
                     // Placed points + numbers.

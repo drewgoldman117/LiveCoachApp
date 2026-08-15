@@ -270,7 +270,7 @@ struct LiveView: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                CameraPreview(session: camera.session)
+                CameraPreview(session: camera.session, angle: camera.captureAngle)
                 // pipeline.calibration, NOT the one passed in: the court map can
                 // arrive (or be replaced) mid-session.
                 OverlayView(result: pipeline.result,

@@ -10,6 +10,10 @@ import AVFoundation
 
 struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
+    /// Rotation for the current camera (front and back differ by 180 - see
+    /// CameraManager.captureAngle). An input rather than a constant so SwiftUI
+    /// runs updateUIView when it changes on a camera flip.
+    var angle: CGFloat = CameraManager.landscapeAngle
 
     func makeUIView(context: Context) -> PreviewView {
         let v = PreviewView()
@@ -24,10 +28,12 @@ struct CameraPreview: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: PreviewView, context: Context) {
+        uiView.angle = angle
         uiView.applyRotation()
     }
 
     final class PreviewView: UIView {
+        var angle: CGFloat = CameraManager.landscapeAngle
         override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
         var videoPreviewLayer: AVCaptureVideoPreviewLayer {
             layer as! AVCaptureVideoPreviewLayer
@@ -50,7 +56,7 @@ struct CameraPreview: UIViewRepresentable {
         /// as soon as it can be and stays applied.
         func applyRotation() {
             guard let conn = videoPreviewLayer.connection else { return }
-            CameraManager.apply(CameraManager.landscapeAngle, to: conn)
+            CameraManager.apply(angle, to: conn)
             // Never mirror, front camera included. The capture buffers are
             // deliberately unmirrored (see CameraManager.configure) so the
             // court's left stays left; a preview that auto-mirrors while the

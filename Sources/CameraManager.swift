@@ -40,6 +40,13 @@ final class CameraManager: NSObject, ObservableObject {
     /// returned false, leaving the connection at its 90-degree portrait default.
     static let landscapeAngle: CGFloat = 0
 
+    /// The angle for the CURRENT camera. The front sensor is mounted opposite
+    /// the back one, so in the same physical hold the front camera needs the
+    /// image turned 180 degrees where the back needs 0 - one fixed angle for
+    /// both leaves whichever camera wasn't verified upside down.
+    /// Published so the preview re-applies it when the camera flips.
+    @Published private(set) var captureAngle: CGFloat = CameraManager.landscapeAngle
+
     private let videoQueue = DispatchQueue(label: "camera.video.queue")
     private let output = AVCaptureVideoDataOutput()
     private var input: AVCaptureDeviceInput?
@@ -123,8 +130,11 @@ final class CameraManager: NSObject, ObservableObject {
         output.setSampleBufferDelegate(self, queue: videoQueue)
         if session.canAddOutput(output) { session.addOutput(output) }
 
+        let angle: CGFloat = (desiredPosition == .front)
+            ? Self.landscapeAngle + 180 : Self.landscapeAngle
+        DispatchQueue.main.async { self.captureAngle = angle }
         for conn in output.connections {
-            CameraManager.apply(Self.landscapeAngle, to: conn)
+            CameraManager.apply(angle, to: conn)
             // The buffers must be geometrically truthful for BOTH cameras. A
             // front camera mirrors by convention (a selfie reads like a
             // mirror); mirrored pixels would flip the court's left and right,
