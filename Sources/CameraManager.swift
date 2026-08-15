@@ -50,6 +50,8 @@ final class CameraManager: NSObject, ObservableObject {
     private let videoQueue = DispatchQueue(label: "camera.video.queue")
     private let output = AVCaptureVideoDataOutput()
     private var input: AVCaptureDeviceInput?
+    /// Strong reference required - the coordinator stops updating if released.
+    private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     /// The position `configure` should use - read on videoQueue, unlike the
     /// published `position`, which exists for the UI on the main thread.
     private var desiredPosition: AVCaptureDevice.Position = .back
@@ -130,8 +132,16 @@ final class CameraManager: NSObject, ObservableObject {
         output.setSampleBufferDelegate(self, queue: videoQueue)
         if session.canAddOutput(output) { session.addOutput(output) }
 
-        let angle: CGFloat = (desiredPosition == .front)
-            ? Self.landscapeAngle + 180 : Self.landscapeAngle
+        // Ask the device itself, per sensor and per current hold, instead of
+        // hardcoding. A fixed 0 was verified for the BACK camera, but the
+        // front sensor is mounted differently, and the first two guesses for
+        // it (0, then 180) were each wrong on the real phone - the coordinator
+        // is the API that ends the guessing. Read once at configure time: this
+        // is a mounted-phone app, so the hold at flip time is the hold.
+        let rc = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
+        rotationCoordinator = rc
+        let angle = rc.videoRotationAngleForHorizonLevelCapture
+        print("Camera: \(desiredPosition == .front ? "front" : "back") horizon-level angle \(angle)")
         DispatchQueue.main.async { self.captureAngle = angle }
         for conn in output.connections {
             CameraManager.apply(angle, to: conn)
