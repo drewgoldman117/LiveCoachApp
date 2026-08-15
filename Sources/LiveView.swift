@@ -330,15 +330,17 @@ struct LiveView: View {
                 // visible, and automatic drift re-detection cannot rescue this
                 // case by design: it fires when a fit stops matching the paint,
                 // and a confidently-wrong court matches paint perfectly well.
+                // Flip is ALWAYS available - unlike "reset court" it is most
+                // needed before any court map exists, because flipping is how
+                // the correct camera gets pointed at the court to begin with.
+                ChromeButton(title: "flip cam", systemImage: "arrow.triangle.2.circlepath.camera") {
+                    camera.flip()
+                    // A different camera is a different framing AND different
+                    // optics - the old homography describes neither. Throw it
+                    // away and let detection start over on the new view.
+                    pipeline.resetCourt()
+                }
                 if pipeline.calibration != nil {
-                    ChromeButton(title: "flip cam", systemImage: "arrow.triangle.2.circlepath.camera") {
-                        camera.flip()
-                        // A different camera is a different framing AND
-                        // different optics - the old homography describes
-                        // neither. Throw it away and let detection start over
-                        // on the new view.
-                        pipeline.resetCourt()
-                    }
                     ChromeButton(title: "reset court", systemImage: "arrow.counterclockwise") {
                         pipeline.resetCourt()
                     }
