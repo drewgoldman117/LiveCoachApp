@@ -18,7 +18,7 @@ final class CameraManager: NSObject, ObservableObject {
     /// Called on `videoQueue` for every captured frame. The buffer is already
     /// oriented to landscape, so detection pixel coords line up with what the
     /// preview layer displays (.resizeAspect).
-    var onFrame: ((CVPixelBuffer) -> Void)?
+    var onFrame: ((CVPixelBuffer, CMTime) -> Void)?
 
     /// Oriented frame dimensions (width, height) in pixels -- needed to map
     /// detection coordinates into the aspect-fit preview rect.
@@ -52,10 +52,6 @@ final class CameraManager: NSObject, ObservableObject {
     private var input: AVCaptureDeviceInput?
     /// Strong reference required - the coordinator stops updating if released.
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
-    /// Session recording; set/cleared from the main thread, read on the
-    /// capture queue. Optional-and-atomic-enough: appending to a recorder
-    /// that is finishing is guarded inside SessionRecorder itself.
-    var recorder: SessionRecorder?
     /// The position `configure` should use - read on videoQueue, unlike the
     /// published `position`, which exists for the UI on the main thread.
     private var desiredPosition: AVCaptureDevice.Position = .back
@@ -240,8 +236,6 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
                        from connection: AVCaptureConnection) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
-        recorder?.append(sampleBuffer)
-
         // Publish the size of the buffer we ACTUALLY received, not the sensor
         // format's. A rotating connection delivers the transposed size, and
         // videoSize drives the aspect-fit mapping every overlay is drawn
@@ -254,6 +248,6 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
             DispatchQueue.main.async { self.videoSize = size }
         }
 
-        onFrame?(pixelBuffer)
+        onFrame?(pixelBuffer, CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
     }
 }

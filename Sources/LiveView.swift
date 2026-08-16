@@ -7,6 +7,7 @@
 
 import SwiftUI
 import CoreVideo
+import CoreMedia
 
 // MARK: - Pipeline (camera -> detector -> published result)
 
@@ -85,8 +86,8 @@ final class LivePipeline: ObservableObject {
         court.adopt(calibration)
         court.onUpdate = { [weak self] cal in self?.adopt(cal) }
         court.onMovingChanged = { [weak self] moving in self?.cameraIsMoving = moving }
-        camera.onFrame = { [weak self] pixelBuffer in
-            self?.handle(pixelBuffer)
+        camera.onFrame = { [weak self] pixelBuffer, pts in
+            self?.handle(pixelBuffer, at: pts)
         }
     }
 
@@ -151,7 +152,11 @@ final class LivePipeline: ObservableObject {
         courtMapForFrame = cal
     }
 
-    private func handle(_ pixelBuffer: CVPixelBuffer) {
+    /// Session recording, fed AFTER detection each frame (see append below).
+    /// Set/cleared from the main thread around session start/end.
+    var recorder: SessionRecorder?
+
+    private func handle(_ pixelBuffer: CVPixelBuffer, at pts: CMTime) {
         guard let detector else { return }
         applyPendingCalibration()
         // Court detection gets the frame too. It samples every 10th and does the
@@ -208,6 +213,20 @@ final class LivePipeline: ObservableObject {
             _ = cal
         }
 
+        // Record the frame WITH its overlay - only now, after both models and
+        // the court sampler have consumed the buffer. Drawing into it any
+        // earlier is the draw-before-detect bug (see SessionRecorder header).
+        if let recorder {
+            var ov = SessionRecorder.Overlay()
+            if let cal = courtMapForFrame {
+                ov.courtSegments = Court.courtSegments.map { (cal.toImage($0.0), cal.toImage($0.1)) }
+            }
+            ov.boxes = r.players.map { $0.boxPx }
+            ov.feet = r.players.map { $0.footPx }
+            ov.ball = r.ballPx
+            recorder.append(pixelBuffer, at: pts, overlay: ov)
+        }
+
         // Rolling 10s ball-detection rate (capture queue owns ballWindow).
         ballWindow.append((now, r.ballPx != nil))
         while let first = ballWindow.first, now - first.t > 10 { ballWindow.removeFirst() }
@@ -260,6 +279,9 @@ struct LiveView: View {
     @State private var recorder = SessionRecorder()
     @State private var finishedRecording: URL?
     @State private var askAboutRecording = false
+    /// Big green check flashed when the court map is (re)acquired - the one
+    /// moment worth celebrating out loud, since everything else waits on it.
+    @State private var showCourtFound = false
 
     init(camera: CameraManager, calibration: Calibration?, buzzer: BuzzerLink? = nil,
          onEnd: @escaping () -> Void = {}) {
@@ -317,6 +339,22 @@ struct LiveView: View {
             }
             .padding(.top, 8)
         }
+        .overlay {
+            if showCourtFound {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 110))
+                    .foregroundStyle(.green)
+                    .shadow(radius: 8)
+                    .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .onChange(of: pipeline.calibration != nil) { had, has in
+            guard has, !had else { return }
+            withAnimation(.spring(duration: 0.3)) { showCourtFound = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                withAnimation(.easeOut(duration: 0.4)) { showCourtFound = false }
+            }
+        }
         // Session chrome, in the same visual language as the home screen. Placed
         // top-trailing so it stays clear of the HUD (top-left) and the minimap
         // (bottom-right) the overlay already draws.
@@ -356,7 +394,7 @@ struct LiveView: View {
         }
         .onAppear {
             camera.start()
-            camera.recorder = recorder
+            pipeline.recorder = recorder
             // A fence-mounted phone is never touched, so the idle timer WILL
             // fire mid-session - measured: screen off ~20s in, session dead.
             // Standard camera-app behavior: no auto-lock while running.
@@ -385,7 +423,7 @@ struct LiveView: View {
 
     private func endSession() {
         pipeline.session.finish(hadCourtMap: pipeline.calibration != nil)
-        camera.recorder = nil
+        pipeline.recorder = nil
         camera.stop()
         recorder.finish { url in
             if let url {
