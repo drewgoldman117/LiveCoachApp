@@ -21,6 +21,12 @@ struct LiveCoachApp: App {
                 options.tracesSampleRate = 0
                 options.enableAppHangTracking = false
             }
+            // One test event per install, so "is this wired up?" is answered
+            // by looking at the dashboard instead of by waiting for a crash.
+            if !UserDefaults.standard.bool(forKey: "sentryVerified") {
+                SentrySDK.capture(message: "LiveCoach: Sentry wired up on this device")
+                UserDefaults.standard.set(true, forKey: "sentryVerified")
+            }
         }
     }
 
