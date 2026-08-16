@@ -52,6 +52,10 @@ final class CameraManager: NSObject, ObservableObject {
     private var input: AVCaptureDeviceInput?
     /// Strong reference required - the coordinator stops updating if released.
     private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
+    /// Session recording; set/cleared from the main thread, read on the
+    /// capture queue. Optional-and-atomic-enough: appending to a recorder
+    /// that is finishing is guarded inside SessionRecorder itself.
+    var recorder: SessionRecorder?
     /// The position `configure` should use - read on videoQueue, unlike the
     /// published `position`, which exists for the UI on the main thread.
     private var desiredPosition: AVCaptureDevice.Position = .back
@@ -235,6 +239,8 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
                        didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+
+        recorder?.append(sampleBuffer)
 
         // Publish the size of the buffer we ACTUALLY received, not the sensor
         // format's. A rotating connection delivers the transposed size, and

@@ -176,6 +176,14 @@ final class LiveCourt: ObservableObject {
         // after mounting is what gets used, instead of a mixture of the two.
         if let last = ring.last, Self.differs(last, gray) {
             ring.removeAll()
+            // The camera MOVED, so whatever map exists describes a framing
+            // that no longer exists. Don't wait out the 120s revalidation
+            // cadence - make the next still buffer re-check immediately. The
+            // recheck itself is the cheap path (score the existing fit against
+            // a fresh median; full re-detection only if it stopped matching
+            // the paint), and it runs on the background queue, so a knocked
+            // camera is caught in seconds without touching the frame budget.
+            lastAttempt = .distantPast
             lock.unlock()
             DispatchQueue.main.async { if !self.isMoving { self.isMoving = true; self.onMovingChanged?(true) } }
             return

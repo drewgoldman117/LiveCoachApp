@@ -27,6 +27,7 @@
 		BC3DD65AB6908552BE87369E /* BuzzerPairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B31F2E6CE8B88220C510462 /* BuzzerPairingView.swift */; };
 		C486DB8CAF3A652DFAAD315B /* LiveCourt.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2C1C3F98CF6FDF1D22760A /* LiveCourt.swift */; };
 		C51AA7D41FE06E6453AB01F8 /* BuzzerLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = B77366B8A3E63DFA4505B875 /* BuzzerLink.swift */; };
+		CA39CA0A7FA64345863BCB5D /* SessionRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17443A461476A19D3768445C /* SessionRecorder.swift */; };
 		DA7CCC749D762B2B05EC6581 /* PlayerDetector.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = C6A78AB1AA49CFB0157DF03D /* PlayerDetector.mlpackage */; };
 		E19216E3308562E68D6F6FEE /* Court.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD02D42963338BC216882164 /* Court.swift */; };
 		E9ADCBFB3E043C26D8886D8B /* CalibrationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33289B4BCB28F0879E03DD5A /* CalibrationView.swift */; };
@@ -36,6 +37,7 @@
 /* Begin PBXFileReference section */
 		08135B6CB8D92BF0CFE251B8 /* Geometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Geometry.swift; sourceTree = "<group>"; };
 		0D06A304A17D670E7ED314BC /* Tactics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tactics.swift; sourceTree = "<group>"; };
+		17443A461476A19D3768445C /* SessionRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRecorder.swift; sourceTree = "<group>"; };
 		1EE27353DBDD27501EA5A19A /* LiveCoachApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveCoachApp.swift; sourceTree = "<group>"; };
 		26E1B60C704DC255534CACFE /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		33289B4BCB28F0879E03DD5A /* CalibrationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalibrationView.swift; sourceTree = "<group>"; };
@@ -103,6 +105,7 @@
 				CE2C1C3F98CF6FDF1D22760A /* LiveCourt.swift */,
 				9D0B835831510210B42DDA82 /* LiveView.swift */,
 				9CF51F40C11138CC61F92675 /* SessionLog.swift */,
+				17443A461476A19D3768445C /* SessionRecorder.swift */,
 				0D06A304A17D670E7ED314BC /* Tactics.swift */,
 			);
 			path = Sources;
@@ -223,6 +226,7 @@
 				A023FC93BA8DA410A2C390C7 /* LiveView.swift in Sources */,
 				DA7CCC749D762B2B05EC6581 /* PlayerDetector.mlpackage in Sources */,
 				1404F17877F556AC663CE34C /* SessionLog.swift in Sources */,
+				CA39CA0A7FA64345863BCB5D /* SessionRecorder.swift in Sources */,
 				FF22B83089C6BC25A6B3EBDB /* Tactics.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

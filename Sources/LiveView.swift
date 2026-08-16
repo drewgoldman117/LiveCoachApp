@@ -256,6 +256,10 @@ struct LiveView: View {
     let calibration: Calibration?
     let onEnd: () -> Void
     @StateObject private var pipeline: LivePipeline
+    /// The session recording, decided on at END: save to Photos or discard.
+    @State private var recorder = SessionRecorder()
+    @State private var finishedRecording: URL?
+    @State private var askAboutRecording = false
 
     init(camera: CameraManager, calibration: Calibration?, buzzer: BuzzerLink? = nil,
          onEnd: @escaping () -> Void = {}) {
@@ -352,12 +356,25 @@ struct LiveView: View {
         }
         .onAppear {
             camera.start()
+            camera.recorder = recorder
             // A fence-mounted phone is never touched, so the idle timer WILL
             // fire mid-session - measured: screen off ~20s in, session dead.
             // Standard camera-app behavior: no auto-lock while running.
             // Restored on disappear so a forgotten app doesn't cook the
             // battery in a pocket.
             UIApplication.shared.isIdleTimerDisabled = true
+        }
+        .confirmationDialog("Save this session's video?",
+                            isPresented: $askAboutRecording, titleVisibility: .visible) {
+            Button("Save to camera roll") {
+                if let url = finishedRecording {
+                    SessionRecorder.saveToPhotos(url) { _ in onEnd() }
+                } else { onEnd() }
+            }
+            Button("Discard", role: .destructive) {
+                if let url = finishedRecording { SessionRecorder.discard(url) }
+                onEnd()
+            }
         }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
@@ -368,8 +385,16 @@ struct LiveView: View {
 
     private func endSession() {
         pipeline.session.finish(hadCourtMap: pipeline.calibration != nil)
+        camera.recorder = nil
         camera.stop()
-        onEnd()
+        recorder.finish { url in
+            if let url {
+                finishedRecording = url
+                askAboutRecording = true    // leave the screen AFTER the choice
+            } else {
+                onEnd()
+            }
+        }
     }
 }
 
@@ -495,7 +520,10 @@ struct OverlayView: View {
             let pb = fit.toView(cal.toImage(b))
             path.move(to: pa); path.addLine(to: pb)
         }
-        ctx.stroke(path, with: .color(.yellow.opacity(0.7)), lineWidth: 2)
+        // Thick and bright orange. The 2px 70% yellow was invisible against
+        // sunlit paint from across a court - the overlay exists to be read at
+        // a glance from the baseline.
+        ctx.stroke(path, with: .color(.orange), lineWidth: 5)
     }
 
     private func drawPlayers(_ ctx: GraphicsContext, _ fit: AspectFit) {
