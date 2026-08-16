@@ -7,6 +7,11 @@ options:
     iOS: "17.0"
   createIntermediateGroups: true
 
+packages:
+  Sentry:
+    url: https://github.com/getsentry/sentry-cocoa
+    from: 8.0.0
+
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -16,6 +21,8 @@ targets:
   LiveCoach:
     type: application
     platform: iOS
+    dependencies:
+      - package: Sentry
     sources:
       - path: Sources
       - path: Models          # PlayerDetector/BallDetector .mlpackage -> compiled to .mlmodelc
@@ -35,6 +42,9 @@ targets:
       properties:
         CFBundleDisplayName: LiveCoach
         NSCameraUsageDescription: "Watches the court to detect players and the ball."
+        # Sentry crash reporting. Empty = disabled; paste the DSN from
+        # sentry.io -> project settings -> Client Keys to turn it on.
+        SentryDSN: ""
         # Required before ANY CoreBluetooth use - the app traps without it.
         NSBluetoothAlwaysUsageDescription: "Connects to your Shelly buzzer so it can alert you on court."
         # Launch on the app's own surface color, so there's no white flash

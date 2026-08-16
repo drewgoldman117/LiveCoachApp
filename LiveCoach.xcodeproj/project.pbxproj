@@ -19,6 +19,7 @@
 		729B4753F8371A6E22A17E7E /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26E1B60C704DC255534CACFE /* ContentView.swift */; };
 		8DC9413D00464539FFE1A759 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C1F1B6FD646BFA1B33E31463 /* Assets.xcassets */; };
 		900200C498AA70E67E4E7483 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CA95FD72E5C68B936D69979 /* HomeView.swift */; };
+		91A4F403204812188D1080A0 /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 42F7AB8EEF88CFFB69C0342A /* Sentry */; };
 		A023FC93BA8DA410A2C390C7 /* LiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D0B835831510210B42DDA82 /* LiveView.swift */; };
 		A8B00FB7B4D91F7B564733F2 /* Detectors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39905E5337C668F8532C1937 /* Detectors.swift */; };
 		B99E28C8CAE35C0D422FEB16 /* CourtDetect.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8629A280BF1892BA4B1C6865 /* CourtDetect.swift */; };
@@ -58,6 +59,17 @@
 		CE2C1C3F98CF6FDF1D22760A /* LiveCourt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveCourt.swift; sourceTree = "<group>"; };
 		EB92FB6AA7BB28247D898985 /* Homography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Homography.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A9FC1D2A486039EDDE11FA54 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				91A4F403204812188D1080A0 /* Sentry in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		67696388F60A250BAB6E7F9A /* Models */ = {
@@ -123,6 +135,7 @@
 			buildPhases = (
 				94B01917D980D87ADC4EE4A6 /* Sources */,
 				E1F3BFF4A182F6D2D7D7860B /* Resources */,
+				A9FC1D2A486039EDDE11FA54 /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -130,6 +143,7 @@
 			);
 			name = LiveCoach;
 			packageProductDependencies = (
+				42F7AB8EEF88CFFB69C0342A /* Sentry */,
 			);
 			productName = LiveCoach;
 			productReference = 3E65E7783076EADD9ABE8F94 /* LiveCoach.app */;
@@ -159,6 +173,9 @@
 			);
 			mainGroup = C2FEF76CBA37D9D7BF7F0C87;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				68ED36C99F15A3083B8F5715 /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 8ACA08F608764D07812D3FFE /* Products */;
 			projectDirPath = "";
@@ -394,6 +411,25 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		68ED36C99F15A3083B8F5715 /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/getsentry/sentry-cocoa";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 8.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		42F7AB8EEF88CFFB69C0342A /* Sentry */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 68ED36C99F15A3083B8F5715 /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
+			productName = Sentry;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A5A2F8E737D0EA0DD0B44AD3 /* Project object */;
 }
