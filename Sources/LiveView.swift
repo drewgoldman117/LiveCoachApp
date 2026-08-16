@@ -350,8 +350,17 @@ struct LiveView: View {
             }
             .padding(12)
         }
-        .onAppear { camera.start() }
+        .onAppear {
+            camera.start()
+            // A fence-mounted phone is never touched, so the idle timer WILL
+            // fire mid-session - measured: screen off ~20s in, session dead.
+            // Standard camera-app behavior: no auto-lock while running.
+            // Restored on disappear so a forgotten app doesn't cook the
+            // battery in a pocket.
+            UIApplication.shared.isIdleTimerDisabled = true
+        }
         .onDisappear {
+            UIApplication.shared.isIdleTimerDisabled = false
             // Record whatever ran, however the view was left.
             pipeline.session.finish(hadCourtMap: pipeline.calibration != nil)
         }
