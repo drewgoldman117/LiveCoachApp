@@ -152,10 +152,6 @@ final class LivePipeline: ObservableObject {
         courtMapForFrame = cal
     }
 
-    /// Session recording, fed AFTER detection each frame (see append below).
-    /// Set/cleared from the main thread around session start/end.
-    var recorder: SessionRecorder?
-
     private func handle(_ pixelBuffer: CVPixelBuffer, at pts: CMTime) {
         guard let detector else { return }
         applyPendingCalibration()
@@ -211,20 +207,6 @@ final class LivePipeline: ObservableObject {
                                         recovery: reco)
             }
             _ = cal
-        }
-
-        // Record the frame WITH its overlay - only now, after both models and
-        // the court sampler have consumed the buffer. Drawing into it any
-        // earlier is the draw-before-detect bug (see SessionRecorder header).
-        if let recorder {
-            var ov = SessionRecorder.Overlay()
-            if let cal = courtMapForFrame {
-                ov.courtSegments = Court.courtSegments.map { (cal.toImage($0.0), cal.toImage($0.1)) }
-            }
-            ov.boxes = r.players.map { $0.boxPx }
-            ov.feet = r.players.map { $0.footPx }
-            ov.ball = r.ballPx
-            recorder.append(pixelBuffer, at: pts, overlay: ov)
         }
 
         // Rolling 10s ball-detection rate (capture queue owns ballWindow).
@@ -394,7 +376,7 @@ struct LiveView: View {
         }
         .onAppear {
             camera.start()
-            pipeline.recorder = recorder
+            recorder.start()
             // A fence-mounted phone is never touched, so the idle timer WILL
             // fire mid-session - measured: screen off ~20s in, session dead.
             // Standard camera-app behavior: no auto-lock while running.
@@ -423,7 +405,6 @@ struct LiveView: View {
 
     private func endSession() {
         pipeline.session.finish(hadCourtMap: pipeline.calibration != nil)
-        pipeline.recorder = nil
         camera.stop()
         recorder.finish { url in
             if let url {
@@ -561,7 +542,7 @@ struct OverlayView: View {
         // Thick and bright orange. The 2px 70% yellow was invisible against
         // sunlit paint from across a court - the overlay exists to be read at
         // a glance from the baseline.
-        ctx.stroke(path, with: .color(.orange), lineWidth: 5)
+        ctx.stroke(path, with: .color(.orange), lineWidth: 8)
     }
 
     private func drawPlayers(_ ctx: GraphicsContext, _ fit: AspectFit) {
