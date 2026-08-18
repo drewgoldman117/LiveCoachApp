@@ -43,6 +43,7 @@ targets:
         CFBundleDisplayName: LiveCoach
         NSCameraUsageDescription: "Watches the court to detect players and the ball."
         NSPhotoLibraryAddUsageDescription: "Saves session recordings you choose to keep."
+        NSMicrophoneUsageDescription: "Records court audio with your session video."
         # Sentry crash reporting. Empty = disabled; paste the DSN from
         # sentry.io -> project settings -> Client Keys to turn it on.
         SentryDSN: "https://0a82d6c142e32ec783ed65b3e89af17a@o4511922373656576.ingest.us.sentry.io/4511922376343552"

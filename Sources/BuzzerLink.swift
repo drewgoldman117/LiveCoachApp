@@ -76,8 +76,10 @@ final class BuzzerLink: NSObject, ObservableObject {
 
     var volume: UInt8 = 3               // 0 off ... 3 high; a court is loud
     /// Short blip, not an alarm - mid-point you want a cue you can ignore.
-    /// Matches DEFAULT_BEEP_MS in the prototype's buzzer.py.
-    var beepDuration: TimeInterval = 0.09
+    /// Longer than the prototype's 90ms: hardware volume is already at its
+    /// max (3), so duration is the only loudness lever left, and a 90ms blip
+    /// disappears outdoors under play noise.
+    var beepDuration: TimeInterval = 0.4
     var minGap: TimeInterval = 2.0      // never beep more often than this
 
     private var central: CBCentralManager!

@@ -264,6 +264,9 @@ struct LiveView: View {
     /// Big green check flashed when the court map is (re)acquired - the one
     /// moment worth celebrating out loud, since everything else waits on it.
     @State private var showCourtFound = false
+    /// "BEEP" banner while the buzzer fires, so the video shows WHEN the alert
+    /// went out even though the sound comes from the wearer's buzzer.
+    @State private var showBeep = false
 
     init(camera: CameraManager, calibration: Calibration?, buzzer: BuzzerLink? = nil,
          onEnd: @escaping () -> Void = {}) {
@@ -328,6 +331,24 @@ struct LiveView: View {
                     .foregroundStyle(.green)
                     .shadow(radius: 8)
                     .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .overlay(alignment: .top) {
+            if showBeep {
+                Text("BEEP")
+                    .font(.system(size: 44, weight: .black, design: .monospaced))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 18).padding(.vertical, 6)
+                    .background(.yellow)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .padding(.top, 54)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .onChange(of: pipeline.alerts) { _, _ in
+            withAnimation(.spring(duration: 0.25)) { showBeep = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                withAnimation(.easeOut(duration: 0.3)) { showBeep = false }
             }
         }
         .onChange(of: pipeline.calibration != nil) { had, has in

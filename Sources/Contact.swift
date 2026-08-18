@@ -372,8 +372,14 @@ final class LiveContactDetector {
             // moment of the strike, so measure there.
             let courtAt = af < court.count ? court[af] : [:]
             let boxesAt = af < boxes.count ? boxes[af] : []
+            // The cone's apex is where the BALL was struck, not where the
+            // striker stood - the shot leaves the racket, and drawing from the
+            // feet skews every angle (visibly so on a wide reach). Matches the
+            // Python reference, which draws from the ball. Feet stay as the
+            // fallback for a contact confirmed during a ball-detection gap.
+            let ballCourt = homography?.apply(event.ballPx)
             newly.append(Committed(event: event,
-                                   apexCourt: c.strikerID.flatMap { courtAt[$0] },
+                                   apexCourt: ballCourt ?? c.strikerID.flatMap { courtAt[$0] },
                                    courtAt: courtAt,
                                    boxesAt: boxesAt))
         }

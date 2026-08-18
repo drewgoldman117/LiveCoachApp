@@ -24,7 +24,11 @@ final class SessionRecorder {
     /// app launch; recording begins when the user allows it.
     func start() {
         guard screen.isAvailable, !running else { return }
-        screen.isMicrophoneEnabled = false
+        // Court audio is evidence: the THWOCK of a strike against the video
+        // shows whether contacts fire at the right moment, better than any
+        // number. (The buzzer's beep is on the wearer, so it is only faintly
+        // in this track - the on-screen BEEP banner marks it instead.)
+        screen.isMicrophoneEnabled = true
         screen.startRecording { [weak self] error in
             if error == nil { self?.running = true }
         }
