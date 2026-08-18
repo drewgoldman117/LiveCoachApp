@@ -347,13 +347,16 @@ struct LiveView: View {
         }
         .overlay(alignment: .top) {
             if showBeep {
+                // Same scale as the rest of the top chrome - it announces,
+                // it doesn't cover the court.
                 Text("BEEP")
-                    .font(.system(size: 44, weight: .black, design: .monospaced))
+                    .font(DS.Font.label.bold())
+                    .tracking(DS.Metric.labelTracking)
                     .foregroundStyle(.black)
-                    .padding(.horizontal, 18).padding(.vertical, 6)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
                     .background(.yellow)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .padding(.top, 54)
+                    .clipShape(Capsule())
+                    .padding(.top, 12)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
