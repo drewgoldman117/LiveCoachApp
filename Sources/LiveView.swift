@@ -258,7 +258,7 @@ struct LiveView: View {
     let onEnd: () -> Void
     @StateObject private var pipeline: LivePipeline
     /// The session recording, decided on at END: save to Photos or discard.
-    @State private var recorder = SessionRecorder()
+    @StateObject private var recorder = SessionRecorder()
     @State private var finishedRecording: URL?
     @State private var askAboutRecording = false
     /// Big green check flashed when the court map is (re)acquired - the one
@@ -331,6 +331,18 @@ struct LiveView: View {
                     .foregroundStyle(.green)
                     .shadow(radius: 8)
                     .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            // A recording that died must not look like one that ran.
+            if recorder.isRecording {
+                HStack(spacing: 5) {
+                    Circle().fill(.red).frame(width: 8, height: 8)
+                    Text("REC").font(.caption2.monospaced().bold()).foregroundStyle(.white)
+                }
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(.black.opacity(0.5)).clipShape(Capsule())
+                .padding(.leading, 12).padding(.top, 44)
             }
         }
         .overlay(alignment: .top) {
