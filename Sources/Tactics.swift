@@ -18,9 +18,13 @@ import Foundation
 import CoreGraphics
 
 /// Meters off the bisector that counts as out of position - the buzz trigger.
-/// Verified against real play: a pro sits 0.1-1.2m off (i.e. never trips it);
-/// the genuinely-out-of-position moment on the test footage measured 2.6-2.8m.
-let outOfPositionM: Double = 2.0
+/// Reference points from real play: a pro sits 0.1-1.2m off, and the
+/// genuinely-out-of-position moments on the test footage measured 2.6-2.8m.
+/// 1.0 is a deliberately stricter coaching setting (2026-08-17): it buzzes on
+/// lapses a pro would not commit, which is the point for a student - but it
+/// sits inside the pro range's top end, so expect more frequent beeps and
+/// raise it back toward 2.0 if it nags during good positioning.
+let outOfPositionM: Double = 1.0
 
 enum Tactics {
 
