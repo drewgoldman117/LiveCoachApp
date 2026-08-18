@@ -85,9 +85,17 @@ enum Tactics {
         var best: (area: Double, opp: Opponent)?
         for (id, pos) in courtPositions {
             if let s = strikerID, id == s { continue }
+            // Far side of the net, but with room to be BADLY out of position:
+            // the tight bounds this used to carry (sideline + 1m, baseline +
+            // 3.5m) were a broadcast-footage defense against ball kids and
+            // line judges, and they excluded the opponent precisely when the
+            // alert earns its keep - chased wide or driven deep, meters off
+            // the recovery line. The 2-biggest-boxes rule upstream now does
+            // the not-a-player filtering; what remains here is only sanity
+            // against homography artifacts mapping someone across the fence.
             guard pos.y > Court.netY,
-                  abs(pos.x) <= Court.halfWidthM + 1.0,
-                  pos.y <= Court.lengthM + 3.5 else { continue }
+                  abs(pos.x) <= 12.0,
+                  pos.y <= Court.lengthM + 8.0 else { continue }
             guard let box = boxes.first(where: { $0.id == id }) else { continue }
             let area = Double(box.rect.width * box.rect.height)
             if best == nil || area > best!.area {

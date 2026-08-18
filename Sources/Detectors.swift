@@ -126,33 +126,21 @@ final class Detector {
             let court = calibration?.toCourt(foot) ?? .zero
             playerDets.append(.init(box: box, foot: foot, confidence: obs.confidence, court: court))
         }
-        // ONLY PEOPLE ON THE COURT ARE PLAYERS. The person model happily
-        // fires on a bag against the fence or a passerby behind it, and the
-        // prototype learned on broadcast footage that every tactical signal
-        // must filter by court position (ball kids, line judges). Same filter
-        // here, at the source, so the HUD count, the contact detector and the
-        // opponent metric all see the same two humans. Bounds: doubles width
-        // plus a meter of slack, and a few meters behind each baseline where
-        // players actually stand. Without a court map there is nothing to
-        // judge with, so everyone is kept until one exists.
-        var onCourt = playerDets
-        if calibration != nil {
-            onCourt = playerDets.filter { d in
-                abs(d.court.x) <= Court.halfWidthM + 2.5
-                    && d.court.y >= -4.0 && d.court.y <= Court.lengthM + 4.0
-            }
-        }
-        // Singles: at most TWO players, and size picks them. The real near and
-        // far player are the two biggest person boxes in practice (the
-        // prototype's find_opponent uses the same rule); anything else inside
-        // the bounds - a bag leaning on the fence line, a kid crossing - loses
-        // the seat to an actual player.
-        if onCourt.count > 2 {
-            onCourt = onCourt
+        // Singles: at most TWO players, the two biggest person boxes. Size
+        // alone does the picking - no on-court test, deliberately. A court-
+        // bounds filter looked attractive after a bag was counted as a third
+        // player, but it cuts the other way too: a player chased far outside
+        // the sideline is OFF court at exactly the moment the positioning
+        // alert matters most, and dropping them there kills the beep. The two
+        // real players are the two dominant boxes in a fence-cam frame; a bag
+        // or a passerby loses the seat to them by size, wherever it stands.
+        var picked = playerDets
+        if picked.count > 2 {
+            picked = picked
                 .sorted { $0.box.width * $0.box.height > $1.box.width * $1.box.height }
                 .prefix(2).map { $0 }
         }
-        let players = playerTracker.update(onCourt)
+        let players = playerTracker.update(picked)
 
         // --- Ball ---
         var ballCandidates: [BallTrackerSwift.Candidate] = []
