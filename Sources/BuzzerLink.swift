@@ -99,6 +99,33 @@ final class BuzzerLink: NSObject, ObservableObject {
     ///      deallocated peripheral never completes.
     private var seen: [UUID: CBPeripheral] = [:]
     private var buzzChar: CBCharacteristic?
+    /// When the last beep command was handed to CoreBluetooth (RTT probe).
+    private var buzzSentAt: Date?
+    /// Measured delivery time of the last beep write, milliseconds. On screen
+    /// during a session, because "the sound lags the banner" must be a number,
+    /// not an impression. Healthy reference: ~35ms on a warm link.
+    @Published private(set) var lastBeepMs: Double?
+    /// Pokes the link once a second so iOS never renegotiates it into the
+    /// slow battery-saving cadence an idle-held connection gets - the cause
+    /// of beeps landing ~1.5s late mid-session while the pairing screen's
+    /// test beep (fresh, busy link) was instant. A characteristic READ:
+    /// harmless, no side effects, but the radio has to answer. Costs buzzer
+    /// battery - the coin cell's multi-year rating assumes it sleeps, and
+    /// this deliberately keeps it awake for the length of a session.
+    private var keepalive: DispatchSourceTimer?
+
+    private func startKeepalive(_ peripheral: CBPeripheral) {
+        keepalive?.cancel()
+        guard let vol = volumeChar else { return }
+        let t = DispatchSource.makeTimerSource(queue: queue)
+        t.schedule(deadline: .now() + 1.0, repeating: 1.0)
+        t.setEventHandler { [weak self, weak peripheral] in
+            guard self?.state == .connected, let p = peripheral else { return }
+            p.readValue(for: vol)
+        }
+        t.resume()
+        keepalive = t
+    }
     private var beaconChar: CBCharacteristic?
     private var volumeChar: CBCharacteristic?
     private var lastBuzz = Date.distantPast
@@ -114,7 +141,11 @@ final class BuzzerLink: NSObject, ObservableObject {
     /// The ready-chime fires once per link, on the first bonded write that
     /// actually succeeds - see `didWriteValueFor`.
     private var chimed = false
-    private let queue = DispatchQueue(label: "buzzer.ble")
+    /// User-interactive QoS on purpose: during a session two ML models pin
+    /// the CPU, and a default-priority queue's write can wait behind them -
+    /// the test screen beeps instantly precisely because nothing else is
+    /// running there. The alert IS the product; it outranks a frame.
+    private let queue = DispatchQueue(label: "buzzer.ble", qos: .userInteractive)
 
     private static let savedIdentifierKey = "buzzer.peripheral.identifier"
     private var savedIdentifier: UUID? {
@@ -147,6 +178,7 @@ final class BuzzerLink: NSObject, ObservableObject {
         guard Date().timeIntervalSince(lastBuzz) >= minGap else { return false }
         guard state == .connected, let p = peripheral, let c = buzzChar else { return false }
         lastBuzz = Date()
+        buzzSentAt = Date()      // stamped here; didWriteValueFor reports the RTT
         queue.async { [weak self] in
             guard let self else { return }
             p.writeValue(Data([0x01]), for: c, type: .withResponse)
@@ -381,6 +413,8 @@ extension BuzzerLink: CBCentralManagerDelegate {
                         error: Error?) {
         buzzChar = nil
         chimed = false            // the next successful link should announce itself too
+        keepalive?.cancel()
+        keepalive = nil
         publish(.waitingForDevice)
         // Straight back to a standing connect: it costs nothing while pending
         // and completes the moment the button is next awake.
@@ -455,6 +489,16 @@ extension BuzzerLink: CBPeripheralDelegate {
     /// actually set, which is the state where the buzzer silently does nothing.
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic,
                     error: Error?) {
+        // How long the beep command took to reach the device. This number is
+        // the arbiter for "the sound lags the banner": ~35ms is the healthy
+        // reference from the prototype; hundreds of ms means the link or the
+        // queue is the problem, and by-ear debugging is over.
+        if characteristic.uuid == Self.charBuzzer, error == nil, let sent = buzzSentAt {
+            buzzSentAt = nil
+            let ms = Date().timeIntervalSince(sent) * 1000
+            note(String(format: "beep write landed in %.0fms", ms))
+            DispatchQueue.main.async { self.lastBeepMs = ms }
+        }
         guard let error else {
             // A bonded write that SUCCEEDED is the real "ready" signal: it means
             // the pairing prompt was accepted and beacon mode actually took.
@@ -464,6 +508,7 @@ extension BuzzerLink: CBPeripheralDelegate {
                 chimed = true
                 note("paired and ready - beeping 3x")
                 chime()
+                startKeepalive(peripheral)
             }
             return
         }

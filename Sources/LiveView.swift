@@ -196,8 +196,19 @@ final class LivePipeline: ObservableObject {
                                                  idealCourt: off.foot,
                                                  meters: off.meters)
                     if off.meters > outOfPositionM {
-                        buzzer?.buzz()
-                        DispatchQueue.main.async { self.alerts += 1 }
+                        // The banner must mean "a beep is sounding NOW".
+                        // buzz() rate-limits (one beep per 2s) and contacts
+                        // can fire 0.7s apart, so flashing on every alert
+                        // produced orphan banners whose beep was dropped -
+                        // and the NEXT beep then landed a second after an
+                        // orphan, reading as "the sound lags the banner".
+                        // Banner and sound are now the same event. Without a
+                        // buzzer connected the banner is the only alert
+                        // channel, so it always shows.
+                        let sounded = buzzer?.buzz() ?? true
+                        if sounded {
+                            DispatchQueue.main.async { self.alerts += 1 }
+                        }
                     }
                 }
                 newFlash = ContactFlash(strikerID: hit.event.strikerID,
@@ -268,10 +279,14 @@ struct LiveView: View {
     /// went out even though the sound comes from the wearer's buzzer.
     @State private var showBeep = false
 
+    /// Kept for the latency pill; the pipeline owns the buzzing itself.
+    private let buzzerRef: BuzzerLink?
+
     init(camera: CameraManager, calibration: Calibration?, buzzer: BuzzerLink? = nil,
          onEnd: @escaping () -> Void = {}) {
         self.camera = camera
         self.calibration = calibration
+        self.buzzerRef = buzzer
         self.onEnd = onEnd
         _pipeline = StateObject(wrappedValue: LivePipeline(camera: camera,
                                                           calibration: calibration,
@@ -334,16 +349,21 @@ struct LiveView: View {
             }
         }
         .overlay(alignment: .topLeading) {
-            // A recording that died must not look like one that ran.
-            if recorder.isRecording {
-                HStack(spacing: 5) {
-                    Circle().fill(.red).frame(width: 8, height: 8)
-                    Text("REC").font(.caption2.monospaced().bold()).foregroundStyle(.white)
+            VStack(alignment: .leading, spacing: 6) {
+                // A recording that died must not look like one that ran.
+                if recorder.isRecording {
+                    HStack(spacing: 5) {
+                        Circle().fill(.red).frame(width: 8, height: 8)
+                        Text("REC").font(.caption2.monospaced().bold()).foregroundStyle(.white)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(.black.opacity(0.5)).clipShape(Capsule())
                 }
-                .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(.black.opacity(0.5)).clipShape(Capsule())
-                .padding(.leading, 12).padding(.top, 44)
+                if let link = buzzerRef {
+                    BeepLatencyPill(buzzer: link)
+                }
             }
+            .padding(.leading, 12).padding(.top, 44)
         }
         .overlay(alignment: .top) {
             if showBeep {
@@ -456,6 +476,23 @@ struct LiveView: View {
 /// A control that sits on top of live video: dark glass, hairline edge, small
 /// uppercase label. Same family as the home screen's buttons, but quieter -
 /// nothing here should compete with the overlay.
+/// Measured delivery time of the last beep write. This is the arbiter for
+/// "the sound lags the banner": ~35ms is healthy, hundreds of ms means the
+/// link went idle-slow and the keepalive isn't doing its job.
+struct BeepLatencyPill: View {
+    @ObservedObject var buzzer: BuzzerLink
+
+    var body: some View {
+        if let ms = buzzer.lastBeepMs {
+            Text(String(format: "BEEP %.0fms", ms))
+                .font(.caption2.monospaced().bold())
+                .foregroundStyle(ms < 150 ? .green : .red)
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(.black.opacity(0.5)).clipShape(Capsule())
+        }
+    }
+}
+
 struct ChromeButton: View {
     let title: String
     var systemImage: String? = nil
