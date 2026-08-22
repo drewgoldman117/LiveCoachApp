@@ -410,6 +410,17 @@ struct LiveView: View {
                 // visible, and automatic drift re-detection cannot rescue this
                 // case by design: it fires when a fit stops matching the paint,
                 // and a confidently-wrong court matches paint perfectly well.
+                // Mid-session test beep, the discriminator for "the beep
+                // sounds late": it goes through the exact buzz() path an alert
+                // does, while the session is running. Instant here but late on
+                // alerts would mean the alert path; late here too means the
+                // device itself sounds late after acknowledging the command
+                // (the pill already proves delivery is fast).
+                if let link = buzzerRef {
+                    ChromeButton(title: "test beep", systemImage: "speaker.wave.2") {
+                        link.buzz()
+                    }
+                }
                 // Flip is ALWAYS available - unlike "reset court" it is most
                 // needed before any court map exists, because flipping is how
                 // the correct camera gets pointed at the court to begin with.
